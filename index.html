@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Particle Life</title>
+  <meta property="og:title" content="Particle Life">
+  <meta property="og:description" content="A living universe of coloured particles following simple attraction/repulsion rules. Watch emergent flocking, clustering, and cell-like behaviour unfold. Tweak forces in real time — then screenshot your universe.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <div id="loading-screen">
+    <div id="loading-text">summoning particle forces from the void...</div>
+  </div>
+
+  <div id="error-screen" style="display:none">
+    <div id="error-text">canvas refused to initialise — try a different browser or device</div>
+  </div>
+
+  <div id="title-overlay">
+    <div id="title-main">Particle Life</div>
+    <div id="title-sub">Every universe is unique. Yours is:</div>
+    <div id="universe-name">—</div>
+    <button id="start-btn">begin simulation</button>
+  </div>
+
+  <div id="ui-panel">
+    <button id="panel-toggle" aria-label="Toggle controls">controls</button>
+    <div id="panel-body">
+      <div class="panel-row">
+        <span class="panel-label">universe name</span>
+        <span id="panel-universe-name" class="panel-value">—</span>
+      </div>
+      <div class="panel-row">
+        <label class="panel-label" for="slider-speed">speed</label>
+        <input id="slider-speed" type="range" min="0.2" max="2" step="0.05" value="1">
+      </div>
+      <div class="panel-row">
+        <label class="panel-label" for="slider-friction">friction</label>
+        <input id="slider-friction" type="range" min="0.8" max="0.99" step="0.005" value="0.95">
+      </div>
+      <div class="panel-row">
+        <label class="panel-label" for="slider-count">particles</label>
+        <input id="slider-count" type="range" min="50" max="500" step="10" value="200">
+      </div>
+      <div class="panel-row panel-buttons">
+        <button id="btn-reset">new universe</button>
+        <button id="btn-screenshot">screenshot my universe</button>
+      </div>
+      <div id="share-copy">Your universe: <span id="share-universe-name">—</span></div>
+    </div>
+  </div>
+</body>
+</html>
