@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Particle Life</title>
   <meta property="og:title" content="Particle Life">
-  <meta property="og:description" content="A living universe of coloured particles following simple attraction/repulsion rules. Pick a preset (Drifters, Crystallizers, Predator/Prey…) or roll a random one. See exactly which colours attract or repel which, then screenshot your universe.">
+  <meta property="og:description" content="A living universe of coloured particles following simple attraction/repulsion rules. Tap cells to change the rules and watch the universe reshape itself.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://benlirio.com/particle-life/">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -26,65 +26,24 @@
     <div id="error-text">canvas refused to initialise — try a different browser or device</div>
   </div>
 
-  <div id="title-overlay">
-    <div id="title-main">Particle Life</div>
-    <div id="title-sub">Every universe is unique. Yours is:</div>
-    <div id="universe-name">—</div>
-    <div id="title-buttons">
-      <button id="start-btn">begin simulation</button>
-      <button id="title-help-btn" type="button">how it works</button>
-    </div>
-  </div>
-
-  <div id="help-overlay">
-    <div id="help-modal">
-      <div id="help-title">How Particle Life works</div>
-      <div class="help-section">
-        <p>Five colours of particles float on an infinite toroidal playground. Each colour follows one simple rule: how strongly it is <span class="help-attract">attracted</span> to or <span class="help-repel">repelled</span> from every other colour.</p>
-      </div>
-      <div class="help-section">
-        <div class="help-heading">The rules grid (5x5)</div>
-        <p>Row = the colour <em>acting</em>. Column = the colour it <em>reacts to</em>. <span class="help-attract">Green cell = attracts</span>, <span class="help-repel">red cell = repels</span>, dark = ignores. Rules are one-way, so red chasing yellow does not mean yellow chases red.</p>
-      </div>
-      <div class="help-section">
-        <div class="help-heading">Editing rules (easy mode)</div>
-        <p>Turn on <strong>edit rules</strong>. Click any cell to open a slider — drag it or tap the -/0/+ buttons to set a value. No more repeated clicking.</p>
-      </div>
-      <div class="help-section">
-        <div class="help-heading">Quick start</div>
-        <ul>
-          <li>Try a <strong>preset</strong> — Crystallizers, Predator/Prey, and Snakes each look very different.</li>
-          <li>Use <strong>new universe</strong> to re-spawn particles with the same rules.</li>
-          <li>Hit <strong>randomize rules</strong> to roll a fresh force matrix.</li>
-          <li>Drag your mouse / finger over the canvas to <strong>push particles around</strong>.</li>
-        </ul>
-      </div>
-      <button id="help-close-btn" type="button">got it</button>
-    </div>
-  </div>
-
-  <div id="cell-editor" role="dialog" aria-label="Edit rule value">
-    <div id="cell-editor-title">—</div>
-    <input id="cell-editor-slider" type="range" min="-1" max="1" step="0.05" value="0">
-    <div id="cell-editor-value">0.00</div>
-    <div id="cell-editor-buttons">
-      <button type="button" data-value="-1">repel</button>
-      <button type="button" data-value="0">ignore</button>
-      <button type="button" data-value="1">attract</button>
-    </div>
-    <button id="cell-editor-close" type="button">close</button>
+  <div id="universe-banner">
+    <span id="universe-name">—</span>
   </div>
 
   <div id="ui-panel">
     <div id="panel-header">
       <button id="panel-toggle" aria-label="Toggle controls">controls</button>
-      <button id="panel-help-btn" type="button" aria-label="How it works">?</button>
     </div>
     <div id="panel-body">
-      <div class="panel-row">
-        <span class="panel-label">universe name</span>
-        <span id="panel-universe-name" class="panel-value">—</span>
+
+      <div id="rules-section">
+        <div id="rules-caption">
+          <span class="caption-line">tap a cell to flip: <span class="caption-attract">attract</span> / <span class="caption-ignore">ignore</span> / <span class="caption-repel">repel</span></span>
+          <span class="caption-line caption-sub">row colour acts on column colour</span>
+        </div>
+        <div id="rules-grid" aria-label="Force matrix: rows act on columns. Tap a cell to change."></div>
       </div>
+
       <div class="panel-row">
         <label class="panel-label" for="select-preset">preset</label>
         <select id="select-preset">
@@ -99,38 +58,32 @@
           <option value="custom">Custom — your edited rules</option>
         </select>
       </div>
-      <div class="panel-row">
-        <label class="panel-label" for="slider-speed">speed</label>
-        <input id="slider-speed" type="range" min="0.2" max="2" step="0.05" value="1">
-      </div>
-      <div class="panel-row">
-        <label class="panel-label" for="slider-friction">friction</label>
-        <input id="slider-friction" type="range" min="0.8" max="0.99" step="0.005" value="0.95">
-      </div>
-      <div class="panel-row">
-        <label class="panel-label" for="slider-count">particles</label>
-        <input id="slider-count" type="range" min="50" max="500" step="10" value="200">
-      </div>
-      <div class="panel-row panel-rules-row">
-        <span class="panel-label">rules</span>
-        <div id="rules-grid" aria-label="Force matrix: rows act on columns. Green = attract, red = repel, dark = ignore."></div>
-      </div>
-      <div id="rules-hint">tap a cell to see the rule. turn on <em>edit rules</em> to open a slider.</div>
-      <div id="rules-readout">&nbsp;</div>
-      <div class="panel-row panel-edit-row">
-        <label class="panel-label" for="toggle-edit">edit rules</label>
-        <input id="toggle-edit" type="checkbox">
-        <span id="edit-legend" class="edit-legend">off</span>
-      </div>
+
       <div class="panel-row panel-buttons">
-        <button id="btn-reset">new universe</button>
+        <button id="btn-random-rules">randomize</button>
+        <button id="btn-reset">respawn</button>
         <button id="btn-screenshot">screenshot</button>
       </div>
-      <div class="panel-row panel-buttons">
-        <button id="btn-share-rules">share ruleset</button>
-        <button id="btn-random-rules">randomize rules</button>
+
+      <button id="advanced-toggle" type="button" aria-expanded="false">advanced</button>
+      <div id="advanced-body" hidden>
+        <div class="panel-row">
+          <label class="panel-label" for="slider-speed">speed</label>
+          <input id="slider-speed" type="range" min="0.2" max="2" step="0.05" value="1">
+        </div>
+        <div class="panel-row">
+          <label class="panel-label" for="slider-friction">friction</label>
+          <input id="slider-friction" type="range" min="0.8" max="0.99" step="0.005" value="0.95">
+        </div>
+        <div class="panel-row">
+          <label class="panel-label" for="slider-count">particles</label>
+          <input id="slider-count" type="range" min="50" max="500" step="10" value="200">
+        </div>
+        <div class="panel-row panel-buttons">
+          <button id="btn-share-rules">share ruleset link</button>
+        </div>
       </div>
-      <div id="share-copy">Your universe: <span id="share-universe-name">—</span></div>
+
     </div>
   </div>
 </body>
