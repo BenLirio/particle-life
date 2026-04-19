@@ -401,6 +401,96 @@
   const editLegend = document.getElementById('edit-legend');
   const btnShareRules = document.getElementById('btn-share-rules');
   const btnRandomRules = document.getElementById('btn-random-rules');
+  const helpOverlay = document.getElementById('help-overlay');
+  const helpCloseBtn = document.getElementById('help-close-btn');
+  const titleHelpBtn = document.getElementById('title-help-btn');
+  const panelHelpBtn = document.getElementById('panel-help-btn');
+  const cellEditor = document.getElementById('cell-editor');
+  const cellEditorTitle = document.getElementById('cell-editor-title');
+  const cellEditorSlider = document.getElementById('cell-editor-slider');
+  const cellEditorValue = document.getElementById('cell-editor-value');
+  const cellEditorButtons = document.getElementById('cell-editor-buttons');
+  const cellEditorClose = document.getElementById('cell-editor-close');
+
+  // Track which cell the editor is operating on + a reference to its DOM node so we
+  // can live-refresh the colour as the slider moves.
+  let editorTarget = null;   // { row, col, cell }
+
+  function openCellEditor(row, col, cell) {
+    editorTarget = { row: row, col: col, cell: cell };
+    const v = forceMatrix[row][col];
+    cellEditorTitle.textContent =
+      COLOR_NAMES[row] + ' → ' + COLOR_NAMES[col] + ' (row acts on column)';
+    cellEditorSlider.value = v.toFixed(2);
+    cellEditorValue.textContent = v.toFixed(2);
+    cellEditor.classList.add('visible');
+  }
+
+  function closeCellEditor() {
+    editorTarget = null;
+    cellEditor.classList.remove('visible');
+  }
+
+  function applyEditorValue(v) {
+    if (!editorTarget) return;
+    v = Math.max(-1, Math.min(1, v));
+    const { row, col, cell } = editorTarget;
+    forceMatrix[row][col] = v;
+    cellEditorValue.textContent = v.toFixed(2);
+    refreshCell(cell, row, col);
+    markRulesCustom();
+    showRuleReadout(row, col);
+  }
+
+  if (cellEditorSlider) {
+    cellEditorSlider.addEventListener('input', function () {
+      applyEditorValue(parseFloat(this.value));
+    });
+  }
+
+  if (cellEditorButtons) {
+    cellEditorButtons.addEventListener('click', function (e) {
+      const btn = e.target.closest('button[data-value]');
+      if (!btn) return;
+      const v = parseFloat(btn.getAttribute('data-value'));
+      cellEditorSlider.value = v.toFixed(2);
+      applyEditorValue(v);
+    });
+  }
+
+  if (cellEditorClose) {
+    cellEditorClose.addEventListener('click', closeCellEditor);
+  }
+
+  // Click outside the editor to close
+  document.addEventListener('click', function (e) {
+    if (!cellEditor.classList.contains('visible')) return;
+    if (cellEditor.contains(e.target)) return;
+    if (e.target.classList && e.target.classList.contains('rules-cell')) return;
+    closeCellEditor();
+  }, true);
+
+  // Help overlay wiring
+  function openHelp() {
+    if (helpOverlay) helpOverlay.classList.add('visible');
+  }
+  function closeHelp() {
+    if (helpOverlay) helpOverlay.classList.remove('visible');
+  }
+  if (helpCloseBtn) helpCloseBtn.addEventListener('click', closeHelp);
+  if (titleHelpBtn) titleHelpBtn.addEventListener('click', openHelp);
+  if (panelHelpBtn) panelHelpBtn.addEventListener('click', openHelp);
+  if (helpOverlay) {
+    helpOverlay.addEventListener('click', function (e) {
+      if (e.target === helpOverlay) closeHelp();
+    });
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      if (cellEditor.classList.contains('visible')) closeCellEditor();
+      else if (helpOverlay && helpOverlay.classList.contains('visible')) closeHelp();
+    }
+  });
 
   function setParticleCountDefault() {
     particleCount = window.innerWidth < 640 ? 150 : 300;
@@ -560,22 +650,12 @@
 
           cell.addEventListener('click', function (e) {
             if (uiPanel && uiPanel.classList.contains('editing')) {
-              // Edit mode: left click cycles forward, shift-click cycles backward
-              const dir = e.shiftKey ? -1 : 1;
-              forceMatrix[row][col] = cycleForce(forceMatrix[row][col], dir);
-              refreshCell(cell, row, col);
-              markRulesCustom();
+              // Edit mode: open the popover editor (slider + quick-set buttons).
+              // This avoids the repetitive-clicking pain of the old cycle-through interaction.
+              e.stopPropagation();
+              openCellEditor(row, col, cell);
               showRuleReadout(row, col);
             } else {
-              showRuleReadout(row, col);
-            }
-          });
-          cell.addEventListener('contextmenu', function (e) {
-            if (uiPanel && uiPanel.classList.contains('editing')) {
-              e.preventDefault();
-              forceMatrix[row][col] = cycleForce(forceMatrix[row][col], -1);
-              refreshCell(cell, row, col);
-              markRulesCustom();
               showRuleReadout(row, col);
             }
           });

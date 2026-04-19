@@ -30,11 +30,56 @@
     <div id="title-main">Particle Life</div>
     <div id="title-sub">Every universe is unique. Yours is:</div>
     <div id="universe-name">—</div>
-    <button id="start-btn">begin simulation</button>
+    <div id="title-buttons">
+      <button id="start-btn">begin simulation</button>
+      <button id="title-help-btn" type="button">how it works</button>
+    </div>
+  </div>
+
+  <div id="help-overlay">
+    <div id="help-modal">
+      <div id="help-title">How Particle Life works</div>
+      <div class="help-section">
+        <p>Five colours of particles float on an infinite toroidal playground. Each colour follows one simple rule: how strongly it is <span class="help-attract">attracted</span> to or <span class="help-repel">repelled</span> from every other colour.</p>
+      </div>
+      <div class="help-section">
+        <div class="help-heading">The rules grid (5x5)</div>
+        <p>Row = the colour <em>acting</em>. Column = the colour it <em>reacts to</em>. <span class="help-attract">Green cell = attracts</span>, <span class="help-repel">red cell = repels</span>, dark = ignores. Rules are one-way, so red chasing yellow does not mean yellow chases red.</p>
+      </div>
+      <div class="help-section">
+        <div class="help-heading">Editing rules (easy mode)</div>
+        <p>Turn on <strong>edit rules</strong>. Click any cell to open a slider — drag it or tap the -/0/+ buttons to set a value. No more repeated clicking.</p>
+      </div>
+      <div class="help-section">
+        <div class="help-heading">Quick start</div>
+        <ul>
+          <li>Try a <strong>preset</strong> — Crystallizers, Predator/Prey, and Snakes each look very different.</li>
+          <li>Use <strong>new universe</strong> to re-spawn particles with the same rules.</li>
+          <li>Hit <strong>randomize rules</strong> to roll a fresh force matrix.</li>
+          <li>Drag your mouse / finger over the canvas to <strong>push particles around</strong>.</li>
+        </ul>
+      </div>
+      <button id="help-close-btn" type="button">got it</button>
+    </div>
+  </div>
+
+  <div id="cell-editor" role="dialog" aria-label="Edit rule value">
+    <div id="cell-editor-title">—</div>
+    <input id="cell-editor-slider" type="range" min="-1" max="1" step="0.05" value="0">
+    <div id="cell-editor-value">0.00</div>
+    <div id="cell-editor-buttons">
+      <button type="button" data-value="-1">repel</button>
+      <button type="button" data-value="0">ignore</button>
+      <button type="button" data-value="1">attract</button>
+    </div>
+    <button id="cell-editor-close" type="button">close</button>
   </div>
 
   <div id="ui-panel">
-    <button id="panel-toggle" aria-label="Toggle controls">controls</button>
+    <div id="panel-header">
+      <button id="panel-toggle" aria-label="Toggle controls">controls</button>
+      <button id="panel-help-btn" type="button" aria-label="How it works">?</button>
+    </div>
     <div id="panel-body">
       <div class="panel-row">
         <span class="panel-label">universe name</span>
@@ -70,7 +115,7 @@
         <span class="panel-label">rules</span>
         <div id="rules-grid" aria-label="Force matrix: rows act on columns. Green = attract, red = repel, dark = ignore."></div>
       </div>
-      <div id="rules-hint">tap a cell: see the rule. toggle edit mode to change it.</div>
+      <div id="rules-hint">tap a cell to see the rule. turn on <em>edit rules</em> to open a slider.</div>
       <div id="rules-readout">&nbsp;</div>
       <div class="panel-row panel-edit-row">
         <label class="panel-label" for="toggle-edit">edit rules</label>
