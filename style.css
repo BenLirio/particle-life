@@ -317,6 +317,74 @@ input[type="range"]::-moz-range-thumb {
   opacity: 1;
 }
 
+/* ── Preset select ── */
+select#select-preset {
+  flex: 1;
+  background: #111;
+  color: var(--neon-cyan);
+  border: 1px solid var(--neon-cyan);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 6px 8px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  min-height: 32px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+select#select-preset:focus { outline: 1px solid var(--neon-yellow); }
+select#select-preset option { background: #111; color: var(--neon-cyan); }
+
+/* ── Rules grid ── */
+.panel-rules-row { align-items: flex-start; }
+
+#rules-grid {
+  display: grid;
+  grid-template-columns: 16px repeat(5, 1fr);
+  grid-template-rows: 16px repeat(5, 1fr);
+  gap: 2px;
+  flex: 1;
+  max-width: 200px;
+  aspect-ratio: 1 / 1;
+}
+
+.rules-cell {
+  width: 100%;
+  height: 100%;
+  border: 1px solid #1a1a1a;
+  cursor: pointer;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+}
+
+.rules-cell.header {
+  border: none;
+  cursor: default;
+}
+
+.rules-cell.header-swatch {
+  border-radius: 50%;
+  box-shadow: 0 0 4px currentColor;
+}
+
+#rules-hint {
+  font-size: 10px;
+  color: var(--fg);
+  opacity: 0.5;
+  letter-spacing: 0.04em;
+  margin: 4px 0 2px;
+}
+
+#rules-readout {
+  font-size: 11px;
+  color: var(--neon-yellow);
+  letter-spacing: 0.03em;
+  margin-bottom: 8px;
+  min-height: 1.2em;
+  line-height: 1.2;
+}
+
 /* ── Desktop: side panel ── */
 @media (min-width: 640px) {
   #ui-panel {

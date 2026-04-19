@@ -42,15 +42,71 @@
 
   // ── Config ──────────────────────────────────────────────────────────────────
   const COLORS = ['#ff2244', '#00ffee', '#ffdd00', '#39ff14', '#ff00cc'];
+  const COLOR_NAMES = ['red', 'cyan', 'yellow', 'green', 'magenta'];
   const NUM_TYPES = COLORS.length;
   const MAX_DIST = 120;       // interaction radius (px)
   const MIN_DIST = 20;        // repulsion floor
   const FORCE_SCALE = 0.5;    // magnitude multiplier
 
+  // ── Hand-tuned presets (5x5 force matrices, values in -1..+1) ───────────────
+  // Row = "this color", Column = "feels toward that color".
+  const PRESETS = {
+    drifters: [
+      [ 0.10,  0.05, -0.05,  0.05,  0.05],
+      [ 0.05,  0.10,  0.05, -0.05,  0.05],
+      [-0.05,  0.05,  0.10,  0.05, -0.05],
+      [ 0.05, -0.05,  0.05,  0.10,  0.05],
+      [ 0.05,  0.05, -0.05,  0.05,  0.10],
+    ],
+    crystallizers: [
+      [ 0.80, -0.40, -0.40, -0.40, -0.40],
+      [-0.40,  0.80, -0.40, -0.40, -0.40],
+      [-0.40, -0.40,  0.80, -0.40, -0.40],
+      [-0.40, -0.40, -0.40,  0.80, -0.40],
+      [-0.40, -0.40, -0.40, -0.40,  0.80],
+    ],
+    'predator-prey': [
+      [ 0.20,  0.80, -0.50, -0.20,  0.10],
+      [-0.80,  0.20,  0.80, -0.50, -0.20],
+      [-0.20, -0.80,  0.20,  0.80, -0.50],
+      [-0.50, -0.20, -0.80,  0.20,  0.80],
+      [ 0.80, -0.50, -0.20, -0.80,  0.20],
+    ],
+    cells: [
+      [ 0.60,  0.40, -0.30,  0.10, -0.10],
+      [ 0.40,  0.60, -0.30, -0.10,  0.10],
+      [-0.30, -0.30,  0.10, -0.20, -0.20],
+      [ 0.10, -0.10, -0.20,  0.60,  0.40],
+      [-0.10,  0.10, -0.20,  0.40,  0.60],
+    ],
+    snakes: [
+      [ 0.30,  0.90,  0.00,  0.00,  0.00],
+      [ 0.00,  0.30,  0.90,  0.00,  0.00],
+      [ 0.00,  0.00,  0.30,  0.90,  0.00],
+      [ 0.00,  0.00,  0.00,  0.30,  0.90],
+      [ 0.90,  0.00,  0.00,  0.00,  0.30],
+    ],
+    orbiters: [
+      [ 0.10,  0.70,  0.10,  0.10,  0.10],
+      [-0.70,  0.10,  0.10,  0.10,  0.10],
+      [ 0.10,  0.10,  0.10,  0.70,  0.10],
+      [ 0.10,  0.10, -0.70,  0.10,  0.10],
+      [ 0.10,  0.10,  0.10,  0.10,  0.10],
+    ],
+    exploders: [
+      [-0.80,  0.60,  0.60,  0.60,  0.60],
+      [ 0.60, -0.80,  0.60,  0.60,  0.60],
+      [ 0.60,  0.60, -0.80,  0.60,  0.60],
+      [ 0.60,  0.60,  0.60, -0.80,  0.60],
+      [ 0.60,  0.60,  0.60,  0.60, -0.80],
+    ],
+  };
+
   let seed = hash('' + Date.now());
   let universeName = '';
   let particles = [];
   let forceMatrix = [];        // [type_a][type_b] → -1..+1
+  let currentPreset = 'random';
   let particleCount = 200;
   let speedMultiplier = 1;
   let friction = 0.95;
@@ -227,13 +283,41 @@
     if (animId) { cancelAnimationFrame(animId); animId = null; }
   }
 
+  // Deep-copy a 2D matrix (so presets remain pristine)
+  function cloneMatrix(m) {
+    const out = [];
+    for (let i = 0; i < m.length; i++) out.push(m[i].slice());
+    return out;
+  }
+
   // ── Universe init ────────────────────────────────────────────────────────────
-  function initUniverse(newSeed, count) {
+  function initUniverse(newSeed, count, presetKey) {
     seed = newSeed;
     const rng = makeSeedRNG(seed);
-    forceMatrix = buildForceMatrix(rng);
+    if (presetKey && presetKey !== 'random' && PRESETS[presetKey]) {
+      forceMatrix = cloneMatrix(PRESETS[presetKey]);
+      currentPreset = presetKey;
+    } else {
+      forceMatrix = buildForceMatrix(rng);
+      currentPreset = 'random';
+    }
     particles = spawnParticles(rng, count);
-    universeName = universeNameFromSeed(seed);
+    universeName = (currentPreset === 'random')
+      ? universeNameFromSeed(seed)
+      : presetDisplayName(currentPreset) + ' #' + (seed % 1000);
+  }
+
+  function presetDisplayName(key) {
+    const map = {
+      'drifters': 'Drifters',
+      'crystallizers': 'Crystallizers',
+      'predator-prey': 'Predator/Prey',
+      'cells': 'Cells',
+      'snakes': 'Snakes',
+      'orbiters': 'Orbiters',
+      'exploders': 'Exploders',
+    };
+    return map[key] || key;
   }
 
   // ── UI wiring ────────────────────────────────────────────────────────────────
@@ -249,6 +333,9 @@
   const sliderSpeed = document.getElementById('slider-speed');
   const sliderFriction = document.getElementById('slider-friction');
   const sliderCount = document.getElementById('slider-count');
+  const selectPreset = document.getElementById('select-preset');
+  const rulesGrid = document.getElementById('rules-grid');
+  const rulesReadout = document.getElementById('rules-readout');
   const panelToggle = document.getElementById('panel-toggle');
   const panelBody = document.getElementById('panel-body');
 
@@ -280,9 +367,22 @@
     stopLoop();
     const newSeed = hash('' + Date.now() + Math.random());
     particleCount = parseInt(sliderCount.value, 10);
-    initUniverse(newSeed, particleCount);
+    initUniverse(newSeed, particleCount, selectPreset.value);
     updateNameDisplay();
+    renderRulesGrid();
     // Redraw background clean
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    startLoop();
+  });
+
+  selectPreset.addEventListener('change', function () {
+    stopLoop();
+    const newSeed = hash('' + Date.now() + Math.random());
+    particleCount = parseInt(sliderCount.value, 10);
+    initUniverse(newSeed, particleCount, this.value);
+    updateNameDisplay();
+    renderRulesGrid();
     ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     startLoop();
@@ -299,11 +399,85 @@
   sliderCount.addEventListener('change', function () {
     particleCount = parseInt(this.value, 10);
     const rng = makeSeedRNG(seed);
-    forceMatrix = buildForceMatrix(rng);
+    // Re-roll the matrix only if we're on the random preset; otherwise keep
+    // the chosen preset's rules so changing count doesn't silently change behaviour.
+    if (currentPreset === 'random') {
+      forceMatrix = buildForceMatrix(rng);
+      renderRulesGrid();
+    }
     particles = spawnParticles(rng, particleCount);
     ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   });
+
+  // ── Rules grid (visualises the force matrix) ─────────────────────────────────
+  function forceColor(v) {
+    // v in -1..+1.  Negative = red (repel), positive = green (attract), 0 = dark.
+    const mag = Math.min(1, Math.abs(v));
+    const alpha = 0.15 + mag * 0.7;
+    if (v >= 0) return 'rgba(57, 255, 20, ' + alpha.toFixed(3) + ')';   // neon-green
+    return 'rgba(255, 34, 68, ' + alpha.toFixed(3) + ')';               // neon-red
+  }
+
+  function describeForce(v, fromColor, toColor) {
+    const mag = Math.abs(v);
+    let strength;
+    if (mag < 0.08) strength = 'ignores';
+    else if (mag < 0.3) strength = (v >= 0) ? 'mildly attracts' : 'mildly repels';
+    else if (mag < 0.6) strength = (v >= 0) ? 'attracts' : 'repels';
+    else strength = (v >= 0) ? 'strongly attracts' : 'strongly repels';
+    if (mag < 0.08) return fromColor + ' ignores ' + toColor;
+    return fromColor + ' ' + strength + ' ' + toColor;
+  }
+
+  function renderRulesGrid() {
+    if (!rulesGrid) return;
+    rulesGrid.innerHTML = '';
+
+    // Top-left empty corner
+    const corner = document.createElement('div');
+    corner.className = 'rules-cell header';
+    rulesGrid.appendChild(corner);
+
+    // Column headers (target color swatches)
+    for (let c = 0; c < NUM_TYPES; c++) {
+      const sw = document.createElement('div');
+      sw.className = 'rules-cell header header-swatch';
+      sw.style.background = COLORS[c];
+      sw.style.color = COLORS[c];
+      sw.title = COLOR_NAMES[c] + ' (target)';
+      rulesGrid.appendChild(sw);
+    }
+
+    // Rows
+    for (let r = 0; r < NUM_TYPES; r++) {
+      // Row header swatch
+      const sw = document.createElement('div');
+      sw.className = 'rules-cell header header-swatch';
+      sw.style.background = COLORS[r];
+      sw.style.color = COLORS[r];
+      sw.title = COLOR_NAMES[r] + ' (actor)';
+      rulesGrid.appendChild(sw);
+
+      for (let c = 0; c < NUM_TYPES; c++) {
+        const v = forceMatrix[r][c];
+        const cell = document.createElement('button');
+        cell.type = 'button';
+        cell.className = 'rules-cell';
+        cell.style.background = forceColor(v);
+        const label = describeForce(v, COLOR_NAMES[r], COLOR_NAMES[c]);
+        cell.title = label + ' (' + v.toFixed(2) + ')';
+        cell.setAttribute('aria-label', label);
+        cell.addEventListener('click', function () {
+          if (rulesReadout) rulesReadout.textContent = label + ' (' + v.toFixed(2) + ')';
+        });
+        cell.addEventListener('mouseenter', function () {
+          if (rulesReadout) rulesReadout.textContent = label + ' (' + v.toFixed(2) + ')';
+        });
+        rulesGrid.appendChild(cell);
+      }
+    }
+  }
 
   panelToggle.addEventListener('click', function () {
     panelBody.classList.toggle('collapsed');
@@ -390,8 +564,9 @@
 
   // Show loading for 800ms then show title
   setTimeout(function () {
-    initUniverse(seed, particleCount);
+    initUniverse(seed, particleCount, selectPreset.value);
     updateNameDisplay();
+    renderRulesGrid();
 
     // Start rendering silently behind the title overlay
     ctx.fillStyle = '#0a0a0a';
