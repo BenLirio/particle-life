@@ -51,6 +51,7 @@
           <option value="snakes">Snakes — long trailing chains</option>
           <option value="orbiters">Orbiters — color binary stars</option>
           <option value="exploders">Exploders — bursts &amp; voids</option>
+          <option value="custom">Custom — your edited rules</option>
         </select>
       </div>
       <div class="panel-row">
@@ -69,11 +70,20 @@
         <span class="panel-label">rules</span>
         <div id="rules-grid" aria-label="Force matrix: rows act on columns. Green = attract, red = repel, dark = ignore."></div>
       </div>
-      <div id="rules-hint">tap a cell: shows how each color reacts to each other color</div>
+      <div id="rules-hint">tap a cell: see the rule. toggle edit mode to change it.</div>
       <div id="rules-readout">&nbsp;</div>
+      <div class="panel-row panel-edit-row">
+        <label class="panel-label" for="toggle-edit">edit rules</label>
+        <input id="toggle-edit" type="checkbox">
+        <span id="edit-legend" class="edit-legend">off</span>
+      </div>
       <div class="panel-row panel-buttons">
         <button id="btn-reset">new universe</button>
-        <button id="btn-screenshot">screenshot my universe</button>
+        <button id="btn-screenshot">screenshot</button>
+      </div>
+      <div class="panel-row panel-buttons">
+        <button id="btn-share-rules">share ruleset</button>
+        <button id="btn-random-rules">randomize rules</button>
       </div>
       <div id="share-copy">Your universe: <span id="share-universe-name">—</span></div>
     </div>

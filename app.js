@@ -291,10 +291,19 @@
   }
 
   // ── Universe init ────────────────────────────────────────────────────────────
-  function initUniverse(newSeed, count, presetKey) {
+  function initUniverse(newSeed, count, presetKey, explicitMatrix) {
     seed = newSeed;
     const rng = makeSeedRNG(seed);
-    if (presetKey && presetKey !== 'random' && PRESETS[presetKey]) {
+    if (explicitMatrix) {
+      forceMatrix = cloneMatrix(explicitMatrix);
+      currentPreset = 'custom';
+    } else if (presetKey === 'custom') {
+      // Keep existing matrix if we have one; otherwise start from a random roll
+      if (!forceMatrix || forceMatrix.length === 0) {
+        forceMatrix = buildForceMatrix(rng);
+      }
+      currentPreset = 'custom';
+    } else if (presetKey && presetKey !== 'random' && PRESETS[presetKey]) {
       forceMatrix = cloneMatrix(PRESETS[presetKey]);
       currentPreset = presetKey;
     } else {
@@ -304,7 +313,9 @@
     particles = spawnParticles(rng, count);
     universeName = (currentPreset === 'random')
       ? universeNameFromSeed(seed)
-      : presetDisplayName(currentPreset) + ' #' + (seed % 1000);
+      : (currentPreset === 'custom')
+        ? 'Custom Ruleset'
+        : presetDisplayName(currentPreset) + ' #' + (seed % 1000);
   }
 
   function presetDisplayName(key) {
@@ -316,8 +327,56 @@
       'snakes': 'Snakes',
       'orbiters': 'Orbiters',
       'exploders': 'Exploders',
+      'custom': 'Custom',
     };
     return map[key] || key;
+  }
+
+  // ── Ruleset encoding (URL share) ─────────────────────────────────────────────
+  // Encode 25 values (-1..+1) as 25 hex chars (0..f mapping to -1..+1 in 16 steps).
+  function encodeMatrix(m) {
+    let out = '';
+    for (let r = 0; r < NUM_TYPES; r++) {
+      for (let c = 0; c < NUM_TYPES; c++) {
+        const v = Math.max(-1, Math.min(1, m[r][c]));
+        const q = Math.round((v + 1) * 7.5);        // 0..15
+        out += q.toString(16);
+      }
+    }
+    return out;
+  }
+
+  function decodeMatrix(str) {
+    if (!str || str.length !== NUM_TYPES * NUM_TYPES) return null;
+    const m = [];
+    for (let r = 0; r < NUM_TYPES; r++) {
+      m[r] = [];
+      for (let c = 0; c < NUM_TYPES; c++) {
+        const ch = str.charAt(r * NUM_TYPES + c);
+        const q = parseInt(ch, 16);
+        if (isNaN(q)) return null;
+        m[r][c] = (q / 7.5) - 1;                    // -1..+1
+      }
+    }
+    return m;
+  }
+
+  function readRulesetFromHash() {
+    const hash = (location.hash || '').replace(/^#/, '');
+    if (!hash) return null;
+    const params = new URLSearchParams(hash);
+    const r = params.get('r');
+    if (!r) return null;
+    return decodeMatrix(r);
+  }
+
+  function writeRulesetToHash() {
+    const enc = encodeMatrix(forceMatrix);
+    const params = new URLSearchParams();
+    params.set('r', enc);
+    // Use replaceState so we don't spam history
+    const url = location.pathname + location.search + '#' + params.toString();
+    try { history.replaceState(null, '', url); } catch (e) { location.hash = params.toString(); }
   }
 
   // ── UI wiring ────────────────────────────────────────────────────────────────
@@ -338,6 +397,10 @@
   const rulesReadout = document.getElementById('rules-readout');
   const panelToggle = document.getElementById('panel-toggle');
   const panelBody = document.getElementById('panel-body');
+  const toggleEdit = document.getElementById('toggle-edit');
+  const editLegend = document.getElementById('edit-legend');
+  const btnShareRules = document.getElementById('btn-share-rules');
+  const btnRandomRules = document.getElementById('btn-random-rules');
 
   function setParticleCountDefault() {
     particleCount = window.innerWidth < 640 ? 150 : 300;
@@ -430,6 +493,35 @@
     return fromColor + ' ' + strength + ' ' + toColor;
   }
 
+  // Cycle through discrete force values when editing a rule cell.
+  // Steps chosen so users can reach full repel / neutral / full attract in a few taps.
+  const EDIT_STEPS = [-1.0, -0.7, -0.4, -0.15, 0.0, 0.15, 0.4, 0.7, 1.0];
+
+  function nearestStepIndex(v) {
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < EDIT_STEPS.length; i++) {
+      const d = Math.abs(EDIT_STEPS[i] - v);
+      if (d < bestDist) { bestDist = d; best = i; }
+    }
+    return best;
+  }
+
+  function cycleForce(v, dir) {
+    const i = nearestStepIndex(v);
+    const next = (i + dir + EDIT_STEPS.length) % EDIT_STEPS.length;
+    return EDIT_STEPS[next];
+  }
+
+  function markRulesCustom() {
+    // Once the user edits a rule, we're on a custom ruleset.
+    currentPreset = 'custom';
+    if (selectPreset) selectPreset.value = 'custom';
+    universeName = 'Custom Ruleset';
+    updateNameDisplay();
+    writeRulesetToHash();
+  }
+
   function renderRulesGrid() {
     if (!rulesGrid) return;
     rulesGrid.innerHTML = '';
@@ -460,29 +552,122 @@
       rulesGrid.appendChild(sw);
 
       for (let c = 0; c < NUM_TYPES; c++) {
-        const v = forceMatrix[r][c];
-        const cell = document.createElement('button');
-        cell.type = 'button';
-        cell.className = 'rules-cell';
-        cell.style.background = forceColor(v);
-        const label = describeForce(v, COLOR_NAMES[r], COLOR_NAMES[c]);
-        cell.title = label + ' (' + v.toFixed(2) + ')';
-        cell.setAttribute('aria-label', label);
-        cell.addEventListener('click', function () {
-          if (rulesReadout) rulesReadout.textContent = label + ' (' + v.toFixed(2) + ')';
-        });
-        cell.addEventListener('mouseenter', function () {
-          if (rulesReadout) rulesReadout.textContent = label + ' (' + v.toFixed(2) + ')';
-        });
-        rulesGrid.appendChild(cell);
+        (function (row, col) {
+          const cell = document.createElement('button');
+          cell.type = 'button';
+          cell.className = 'rules-cell';
+          refreshCell(cell, row, col);
+
+          cell.addEventListener('click', function (e) {
+            if (uiPanel && uiPanel.classList.contains('editing')) {
+              // Edit mode: left click cycles forward, shift-click cycles backward
+              const dir = e.shiftKey ? -1 : 1;
+              forceMatrix[row][col] = cycleForce(forceMatrix[row][col], dir);
+              refreshCell(cell, row, col);
+              markRulesCustom();
+              showRuleReadout(row, col);
+            } else {
+              showRuleReadout(row, col);
+            }
+          });
+          cell.addEventListener('contextmenu', function (e) {
+            if (uiPanel && uiPanel.classList.contains('editing')) {
+              e.preventDefault();
+              forceMatrix[row][col] = cycleForce(forceMatrix[row][col], -1);
+              refreshCell(cell, row, col);
+              markRulesCustom();
+              showRuleReadout(row, col);
+            }
+          });
+          cell.addEventListener('mouseenter', function () {
+            showRuleReadout(row, col);
+          });
+          rulesGrid.appendChild(cell);
+        })(r, c);
       }
     }
+  }
+
+  function refreshCell(cell, r, c) {
+    const v = forceMatrix[r][c];
+    cell.style.background = forceColor(v);
+    const label = describeForce(v, COLOR_NAMES[r], COLOR_NAMES[c]);
+    cell.title = label + ' (' + v.toFixed(2) + ')';
+    cell.setAttribute('aria-label', label);
+  }
+
+  function showRuleReadout(r, c) {
+    if (!rulesReadout) return;
+    const v = forceMatrix[r][c];
+    const label = describeForce(v, COLOR_NAMES[r], COLOR_NAMES[c]);
+    rulesReadout.textContent = label + ' (' + v.toFixed(2) + ')';
   }
 
   panelToggle.addEventListener('click', function () {
     panelBody.classList.toggle('collapsed');
     panelToggle.classList.toggle('collapsed');
   });
+
+  if (toggleEdit) {
+    toggleEdit.addEventListener('change', function () {
+      if (this.checked) {
+        uiPanel.classList.add('editing');
+        if (editLegend) editLegend.textContent = 'on — click cells';
+      } else {
+        uiPanel.classList.remove('editing');
+        if (editLegend) editLegend.textContent = 'off';
+      }
+    });
+  }
+
+  if (btnRandomRules) {
+    btnRandomRules.addEventListener('click', function () {
+      const rng = makeSeedRNG(hash('' + Date.now() + Math.random()));
+      forceMatrix = buildForceMatrix(rng);
+      markRulesCustom();
+      renderRulesGrid();
+    });
+  }
+
+  if (btnShareRules) {
+    btnShareRules.addEventListener('click', function () {
+      writeRulesetToHash();
+      const url = location.href;
+      const legend = editLegend || { textContent: '' };
+      const prev = legend.textContent;
+      function done(msg) {
+        if (rulesReadout) {
+          const was = rulesReadout.textContent;
+          rulesReadout.textContent = msg;
+          setTimeout(function () { rulesReadout.textContent = was; }, 1800);
+        }
+      }
+      // Prefer native share, then clipboard, then show URL in readout.
+      if (navigator.share) {
+        navigator.share({
+          title: 'Particle Life — ' + universeName,
+          text: 'My ruleset for Particle Life: ' + universeName,
+          url: url,
+        }).then(function () { done('ruleset link shared'); })
+          .catch(function () {
+            tryClipboard();
+          });
+      } else {
+        tryClipboard();
+      }
+      function tryClipboard() {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(function () {
+            done('ruleset link copied');
+          }).catch(function () {
+            done(url);
+          });
+        } else {
+          done(url);
+        }
+      }
+    });
+  }
 
   // ── Screenshot / share ───────────────────────────────────────────────────────
   function share() {
@@ -564,7 +749,14 @@
 
   // Show loading for 800ms then show title
   setTimeout(function () {
-    initUniverse(seed, particleCount, selectPreset.value);
+    // If the URL carries a shared ruleset, load it up first.
+    const shared = readRulesetFromHash();
+    if (shared) {
+      selectPreset.value = 'custom';
+      initUniverse(seed, particleCount, 'custom', shared);
+    } else {
+      initUniverse(seed, particleCount, selectPreset.value);
+    }
     updateNameDisplay();
     renderRulesGrid();
 
