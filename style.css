@@ -113,6 +113,17 @@ body::after {
   white-space: nowrap;
 }
 
+/* Tag line after the universe name — shows which non-default world
+   knobs are in play (topology, field, time mode, mutation). */
+#universe-tags {
+  opacity: 0.75;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--neon-cyan);
+  text-shadow: 0 0 4px var(--neon-cyan);
+  text-transform: lowercase;
+}
+
 /* ── UI panel ── */
 #ui-panel {
   position: fixed;
@@ -513,9 +524,8 @@ input[type="range"]::-moz-range-thumb {
   display: none;
 }
 
-/* ── Select dropdowns ── */
-select#select-spawn,
-select#select-mouse {
+/* ── Select dropdowns (all panel selects share this styling) ── */
+#panel-body select {
   flex: 1;
   background: #111;
   color: var(--neon-cyan);
@@ -529,10 +539,8 @@ select#select-mouse {
   -webkit-appearance: none;
   appearance: none;
 }
-select#select-spawn:focus,
-select#select-mouse:focus { outline: 1px solid var(--neon-yellow); }
-select#select-spawn option,
-select#select-mouse option { background: #111; color: var(--neon-cyan); }
+#panel-body select:focus { outline: 1px solid var(--neon-yellow); }
+#panel-body select option { background: #111; color: var(--neon-cyan); }
 
 /* ── Desktop: side panel ── */
 @media (min-width: 640px) {

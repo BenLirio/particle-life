@@ -1,16 +1,25 @@
 // Particle Life — an AI-driven universe builder.
-// Type a description of a universe; an LLM returns a full physics spec:
-// colors (3..7), an NxN force matrix, spawn shape, mouse mode, speed,
-// friction, reach and a name. The old "pick a preset from a dropdown"
-// flow is gone — the AI prompt IS the preset engine. You can still edit
-// the force matrix by hand (single-tap cycles a cell through the same
-// attract/ignore/repel states), and still randomize the whole matrix.
 //
-// Sound: a light Web-Audio layer. One continuous ambient pad tuned to the
-// total kinetic energy + particle density of the current world (so chaotic
-// universes hum louder/higher), plus short pings on user interactions.
+// A universe here is more than a force matrix. It's a *world*:
+//   - N coloured species (3..7), each with its own mass and trail length.
+//   - An NxN force matrix (row acts on column, -1..+1).
+//   - A topology: torus (wrap), walls (hard reflect), void (drift off),
+//     arena (circular bounce).
+//   - An environmental field: none, gravity well, anti-gravity, vortex,
+//     waves, dipole.
+//   - A time mode: static, pulse (matrix amplitude breathes), drift (matrix
+//     slowly morphs), or day/night (slow force inversion cycle).
+//   - A mutation rate: close contact can convert one particle's type into
+//     another, so species can spread through the world.
+//   - A spawn shape controlling the t=0 layout.
 //
-// No external libraries. Pure Canvas 2D, pure Web Audio.
+// The AI prompt IS the preset engine: type a description, the LLM returns
+// a full spec for every dimension above. You can still edit everything by
+// hand — tap a force cell, change topology, field, time mode, mutation.
+//
+// Sound: a light Web-Audio ambient pad tuned to kinetic energy, plus short
+// pings on user interactions. No external libraries. Pure Canvas 2D + Web
+// Audio.
 
 (function () {
   'use strict';
@@ -18,12 +27,6 @@
   // ── Endpoints / constants ───────────────────────────────────────────────────
   const AI_ENDPOINT = 'https://uy3l6suz07.execute-api.us-east-1.amazonaws.com/ai';
   const SLUG = 'particle-life';
-  // The factory AI proxy currently whitelists only OpenAI gpt-5.4 models.
-  // The user's feedback asked for "claude-opus-4-7" but the proxy doesn't
-  // pass through Anthropic traffic — `gpt-5.4` is the flagship tier
-  // available here, so we use it. Element design (NxN matrix + colours +
-  // radii + spawn + name, all self-consistent) is exactly the multi-knob
-  // reasoning task the flagship is for. See infrastructure/ai/README.md.
   const AI_MODEL = 'gpt-5.4';
 
   const MIN_COLORS = 3;
@@ -33,8 +36,12 @@
   const MIN_COUNT = 50;
   const MAX_COUNT = 800;
 
-  // Force values a tap cycles through on the rules grid — 3 obvious states
-  // plus mild variants for finer tuning.
+  const ALLOWED_SPAWN    = ['scatter', 'ball', 'ring', 'stripes', 'sectors', 'clusters'];
+  const ALLOWED_MOUSE    = ['repel', 'attract', 'spawn', 'infect', 'off'];
+  const ALLOWED_TOPOLOGY = ['torus', 'walls', 'void', 'arena'];
+  const ALLOWED_FIELD    = ['none', 'gravity', 'antigravity', 'vortex', 'waves', 'pole'];
+  const ALLOWED_TIME     = ['static', 'pulse', 'drift', 'daynight'];
+
   const TAP_CYCLE = [0.7, 0.3, 0.0, -0.3, -0.7];
 
   function nextInCycle(v) {
@@ -52,7 +59,6 @@
     for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
     return Math.abs(h);
   }
-
   function makeSeedRNG(seed) {
     let s = seed >>> 0;
     return function () {
@@ -74,7 +80,6 @@
     'Current', 'Orbit', 'Shell', 'Pulse', 'Cascade', 'Echo',
     'Remnant', 'Signal', 'Field', 'Rift', 'Halo', 'Matrix',
   ];
-
   function universeNameFromSeed(seed) {
     const rng = makeSeedRNG(seed);
     const adj = ADJECTIVES[Math.floor(rng() * ADJECTIVES.length)];
@@ -82,33 +87,41 @@
     return 'The ' + adj + ' ' + noun;
   }
 
-  // Default palette used when the AI isn't involved (hand-edited matrix,
-  // manual randomize, fallback after AI failure).
   const DEFAULT_COLORS = ['#ff2244', '#00ffee', '#ffdd00', '#39ff14', '#ff00cc'];
 
   // ── Universe state ──────────────────────────────────────────────────────────
   let seed = hash('' + Date.now());
   let universeName = '';
   let particles = [];
-  let forceMatrix = [];           // NxN
+  let forceMatrix = [];           // NxN base matrix (the "rest" state)
+  let liveMatrix = [];            // NxN currently-in-effect (time-varying)
   let colors = DEFAULT_COLORS.slice();
+  let masses = [];                // per-type mass (affects inertia)
+  let trailTypes = [];            // per-type visual trail hint (0..1)
   let numTypes = colors.length;
-  let spawnShape = 'scatter';     // scatter | ball | ring | stripes
-  let mouseMode = 'repel';        // repel | attract | off
+  let spawnShape = 'scatter';
+  let mouseMode = 'repel';
+  let topology = 'torus';
+  let field = 'none';
+  let timeMode = 'static';
+  let fieldStrength = 0.35;       // 0..1 multiplier on environmental field
+  let mutationRate = 0;           // 0..0.02 per close-contact per step
+  let trailFade = 0.25;           // background fade alpha (higher = shorter trails)
   let particleCount = 300;
   let speedMultiplier = 1;
   let friction = 0.95;
-  let maxDist = 120;              // interaction radius
+  let maxDist = 120;
   let minDist = DEFAULT_MIN_DIST;
   let running = false;
   let animId = null;
-  let touchX = null, touchY = null;
+  let mouseX = null, mouseY = null;
+  let mouseDown = false;
   let soundOn = true;
+  let worldClock = 0;             // seconds of simulated time since load
 
   // ── Canvas init ─────────────────────────────────────────────────────────────
   const canvas = document.getElementById('canvas');
   let ctx = null;
-
   try {
     ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('no ctx');
@@ -117,7 +130,6 @@
     document.getElementById('error-screen').style.display = 'flex';
     return;
   }
-
   function resizeCanvas() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -134,37 +146,31 @@
     }
     return m;
   }
-
   function cloneMatrix(m) {
     const out = [];
     for (let i = 0; i < m.length; i++) out.push(m[i].slice());
     return out;
   }
-
   function clampColor(c) {
     if (typeof c !== 'string') return '#ffffff';
     const s = c.trim();
     if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
     if (/^#[0-9a-fA-F]{3}$/.test(s)) {
-      // Expand #abc → #aabbcc
       return ('#' + s[1] + s[1] + s[2] + s[2] + s[3] + s[3]).toLowerCase();
     }
     return '#ffffff';
   }
-
   function generateColorPalette(rng, n) {
-    // Fallback palette generator — evenly spaced hues at high saturation.
     const out = [];
     const offset = rng() * 360;
     for (let i = 0; i < n; i++) {
       const h = (offset + (i * 360) / n) % 360;
-      const s = 78 + rng() * 18;   // 78-96
-      const l = 52 + rng() * 10;   // 52-62
+      const s = 78 + rng() * 18;
+      const l = 52 + rng() * 10;
       out.push(hslToHex(h, s, l));
     }
     return out;
   }
-
   function hslToHex(h, s, l) {
     s /= 100; l /= 100;
     const k = n => (n + h / 30) % 12;
@@ -177,9 +183,13 @@
   }
 
   // ── Particle spawn ──────────────────────────────────────────────────────────
-  // Spawn shape controls the initial layout. Scatter = uniform random. Ball =
-  // tight gaussian cluster at centre. Ring = hollow circle. Stripes = vertical
-  // colour bands so colour interactions pop at t=0.
+  // Spawn shape controls t=0 layout.
+  //   scatter  = uniform random
+  //   ball     = gaussian cluster at centre
+  //   ring     = hollow ring
+  //   stripes  = vertical colour bands
+  //   sectors  = pie slices (each colour in its own angular wedge)
+  //   clusters = each colour in its own small blob somewhere on screen
   function spawnParticles(rng, count, shape) {
     const list = [];
     const W = canvas.width;
@@ -190,6 +200,18 @@
     const ringThick = Math.min(W, H) * 0.04;
     const stripeW = W / numTypes;
     const perType = Math.ceil(count / numTypes);
+
+    // Pre-pick cluster centres if needed.
+    const clusterCentres = [];
+    if (shape === 'clusters') {
+      const padX = W * 0.15, padY = H * 0.15;
+      for (let t = 0; t < numTypes; t++) {
+        clusterCentres.push({
+          x: padX + rng() * (W - 2 * padX),
+          y: padY + rng() * (H - 2 * padY),
+        });
+      }
+    }
 
     function gauss() {
       const u = Math.max(1e-6, rng());
@@ -211,10 +233,24 @@
         } else if (shape === 'stripes') {
           x = stripeW * t + rng() * stripeW;
           y = rng() * H;
+        } else if (shape === 'sectors') {
+          // Angular wedge per type, radius uniform within arena.
+          const a0 = (t / numTypes) * Math.PI * 2;
+          const a1 = ((t + 1) / numTypes) * Math.PI * 2;
+          const ang = a0 + rng() * (a1 - a0);
+          const maxR = Math.min(W, H) * 0.42;
+          const r = Math.sqrt(rng()) * maxR;
+          x = cx + Math.cos(ang) * r;
+          y = cy + Math.sin(ang) * r;
+        } else if (shape === 'clusters') {
+          const c = clusterCentres[t];
+          x = c.x + gauss() * ballR * 0.8;
+          y = c.y + gauss() * ballR * 0.8;
         } else {
           x = rng() * W;
           y = rng() * H;
         }
+        // Clamp into world before we start.
         if (x < 0) x += W; else if (x >= W) x -= W;
         if (y < 0) y += H; else if (y >= H) y -= H;
         list.push({ x: x, y: y, vx: 0, vy: 0, type: t });
@@ -223,14 +259,114 @@
     return list;
   }
 
+  // ── Time-variance: recompute liveMatrix from base + worldClock ─────────────
+  function updateLiveMatrix() {
+    if (timeMode === 'static') {
+      liveMatrix = forceMatrix;
+      return;
+    }
+    if (timeMode === 'pulse') {
+      // Amplitude of every cell swings between 0.4x and 1.4x on a ~6s period.
+      const a = 0.9 + 0.5 * Math.sin(worldClock * (Math.PI * 2 / 6));
+      liveMatrix = [];
+      for (let r = 0; r < numTypes; r++) {
+        liveMatrix[r] = [];
+        for (let c = 0; c < numTypes; c++) {
+          liveMatrix[r][c] = Math.max(-1, Math.min(1, forceMatrix[r][c] * a));
+        }
+      }
+      return;
+    }
+    if (timeMode === 'daynight') {
+      // Sign flips on a very slow cycle (~30s) crossing through 0 — so the
+      // universe inhales (rules go to zero), then exhales with inverted
+      // rules, over and over.
+      const a = Math.cos(worldClock * (Math.PI * 2 / 30));
+      liveMatrix = [];
+      for (let r = 0; r < numTypes; r++) {
+        liveMatrix[r] = [];
+        for (let c = 0; c < numTypes; c++) {
+          liveMatrix[r][c] = Math.max(-1, Math.min(1, forceMatrix[r][c] * a));
+        }
+      }
+      return;
+    }
+    if (timeMode === 'drift') {
+      // Each cell is perturbed by its own slow sinusoid seeded by (r,c).
+      // Period ~20s per cell with slightly different phases so the whole
+      // matrix slowly morphs without anything staying fixed for long.
+      liveMatrix = [];
+      for (let r = 0; r < numTypes; r++) {
+        liveMatrix[r] = [];
+        for (let c = 0; c < numTypes; c++) {
+          const ph = (r * 1.7 + c * 2.3);
+          const delta = 0.35 * Math.sin(worldClock * (Math.PI * 2 / 20) + ph);
+          liveMatrix[r][c] = Math.max(-1, Math.min(1, forceMatrix[r][c] + delta));
+        }
+      }
+      return;
+    }
+    liveMatrix = forceMatrix;
+  }
+
+  // ── Environmental field ─────────────────────────────────────────────────────
+  // Returns an (ax, ay) acceleration due to the chosen ambient field at (x,y).
+  // fieldStrength scales the whole thing.
+  function fieldForce(x, y, ax, ay) {
+    if (field === 'none' || fieldStrength === 0) return { ax: ax, ay: ay };
+    const W = canvas.width, H = canvas.height;
+    const cx = W / 2, cy = H / 2;
+    const dx = x - cx;
+    const dy = y - cy;
+    const r  = Math.sqrt(dx * dx + dy * dy) + 0.001;
+    const nx = dx / r;
+    const ny = dy / r;
+    const diag = Math.sqrt(W * W + H * H);
+    const norm = r / (diag * 0.5); // 0 at centre, ~1 at corners
+
+    if (field === 'gravity') {
+      // Pulls toward centre, slightly stronger closer to it (1/(norm+0.2)).
+      const s = fieldStrength * 1.4 / (norm + 0.2);
+      ax -= nx * s;
+      ay -= ny * s;
+    } else if (field === 'antigravity') {
+      const s = fieldStrength * 1.0 / (norm + 0.25);
+      ax += nx * s;
+      ay += ny * s;
+    } else if (field === 'vortex') {
+      // Tangential swirl — perpendicular to the radial direction. Strength
+      // eases out with distance so it looks like a spiral not a shear.
+      const s = fieldStrength * 1.2 * Math.exp(-norm * 1.5);
+      ax += -ny * s;
+      ay +=  nx * s;
+    } else if (field === 'waves') {
+      // Two-axis standing wave, gentle.
+      const k = 0.02;
+      const s = fieldStrength * 0.6;
+      ax += Math.sin(y * k + worldClock * 1.3) * s;
+      ay += Math.sin(x * k + worldClock * 0.9) * s;
+    } else if (field === 'pole') {
+      // Dipole: top half pulls up, bottom half pushes down.
+      const s = fieldStrength * 0.7;
+      ay += (y - cy > 0) ? s : -s;
+    }
+    return { ax: ax, ay: ay };
+  }
+
   // ── Physics step ────────────────────────────────────────────────────────────
   function step(dt) {
+    worldClock += dt;
+    // Time-variance: only recompute a few times per second rather than every
+    // frame — the matrix changes slowly.
+    if (timeMode !== 'static') updateLiveMatrix();
+
     const W = canvas.width;
     const H = canvas.height;
     const maxDistSq = maxDist * maxDist;
     const minDistSq = minDist * minDist;
     const speed = speedMultiplier;
     const fr = friction;
+    const doWrap = topology === 'torus';
 
     for (let i = 0; i < particles.length; i++) {
       const p = particles[i];
@@ -242,10 +378,12 @@
         let dx = q.x - p.x;
         let dy = q.y - p.y;
 
-        if (dx > W / 2) dx -= W;
-        else if (dx < -W / 2) dx += W;
-        if (dy > H / 2) dy -= H;
-        else if (dy < -H / 2) dy += H;
+        if (doWrap) {
+          if (dx > W / 2) dx -= W;
+          else if (dx < -W / 2) dx += W;
+          if (dy > H / 2) dy -= H;
+          else if (dy < -H / 2) dy += H;
+        }
 
         const distSq = dx * dx + dy * dy;
         if (distSq === 0 || distSq > maxDistSq) continue;
@@ -256,60 +394,134 @@
           const repForce = (minDist - dist) / minDist;
           ax -= (dx / dist) * repForce * 2;
           ay -= (dy / dist) * repForce * 2;
+
+          // Mutation on close contact — pick up a tiny chance per step.
+          // Using dt so high-FPS and low-FPS behave similarly.
+          if (mutationRate > 0 && p.type !== q.type) {
+            if (Math.random() < mutationRate * dt * 60) {
+              p.type = q.type;
+            }
+          }
           continue;
         }
 
-        const coeff = forceMatrix[p.type][q.type];
+        const coeff = liveMatrix[p.type][q.type];
         const norm = (dist - minDist) / (maxDist - minDist);
         const strength = coeff * FORCE_SCALE * (1 - norm);
         ax += (dx / dist) * strength;
         ay += (dy / dist) * strength;
       }
 
-      if (touchX !== null && mouseMode !== 'off') {
-        let dx = p.x - touchX;
-        let dy = p.y - touchY;
+      // Ambient field.
+      const fr_ = fieldForce(p.x, p.y, ax, ay);
+      ax = fr_.ax; ay = fr_.ay;
+
+      // Mouse interaction — repel / attract / infect (spawn mode is handled
+      // on click events, not here).
+      if (mouseX !== null && mouseMode !== 'off' && mouseMode !== 'spawn') {
+        let dx = p.x - mouseX;
+        let dy = p.y - mouseY;
         const distSq = dx * dx + dy * dy;
-        const radius = (mouseMode === 'attract') ? 180 : 80;
+        const radius = (mouseMode === 'attract') ? 180
+                     : (mouseMode === 'infect')  ? 90
+                     : 80;
         if (distSq < radius * radius && distSq > 0) {
           const dist = Math.sqrt(distSq);
           const falloff = (radius - dist) / radius;
           if (mouseMode === 'attract') {
-            const attractForce = falloff * 2.2;
-            ax -= (dx / dist) * attractForce;
-            ay -= (dy / dist) * attractForce;
+            const s = falloff * 2.2;
+            ax -= (dx / dist) * s;
+            ay -= (dy / dist) * s;
+          } else if (mouseMode === 'infect') {
+            // Gently pulls in and morphs type toward the "infection colour"
+            // (arbitrary: type 0).
+            const s = falloff * 0.9;
+            ax -= (dx / dist) * s;
+            ay -= (dy / dist) * s;
+            if (Math.random() < 0.01 * falloff) p.type = 0;
           } else {
-            const repForce = falloff * 3;
-            ax += (dx / dist) * repForce;
-            ay += (dy / dist) * repForce;
+            const s = falloff * 3;
+            ax += (dx / dist) * s;
+            ay += (dy / dist) * s;
           }
         }
       }
 
-      p.vx = (p.vx + ax * dt * speed) * fr;
-      p.vy = (p.vy + ay * dt * speed) * fr;
+      // Apply acceleration scaled by mass (mass divides acceleration so
+      // heavier particles feel the same force less).
+      const m = masses[p.type] || 1;
+      p.vx = (p.vx + (ax * dt * speed) / m) * fr;
+      p.vy = (p.vy + (ay * dt * speed) / m) * fr;
     }
 
+    // Position integration + topology boundary handling.
+    const cx = W / 2, cy = H / 2;
+    const arenaR = Math.min(W, H) * 0.48;
     for (let i = 0; i < particles.length; i++) {
       const p = particles[i];
       p.x += p.vx * dt * speed * 60;
       p.y += p.vy * dt * speed * 60;
-      if (p.x < 0) p.x += W;
-      else if (p.x >= W) p.x -= W;
-      if (p.y < 0) p.y += H;
-      else if (p.y >= H) p.y -= H;
+
+      if (topology === 'torus') {
+        if (p.x < 0) p.x += W;
+        else if (p.x >= W) p.x -= W;
+        if (p.y < 0) p.y += H;
+        else if (p.y >= H) p.y -= H;
+      } else if (topology === 'walls') {
+        // Hard reflect — flip velocity on boundary crossing.
+        if (p.x < 0) { p.x = 0; p.vx = -p.vx * 0.85; }
+        else if (p.x >= W) { p.x = W - 1; p.vx = -p.vx * 0.85; }
+        if (p.y < 0) { p.y = 0; p.vy = -p.vy * 0.85; }
+        else if (p.y >= H) { p.y = H - 1; p.vy = -p.vy * 0.85; }
+      } else if (topology === 'arena') {
+        // Circular hard wall centred in the canvas.
+        const dx = p.x - cx;
+        const dy = p.y - cy;
+        const r = Math.sqrt(dx * dx + dy * dy);
+        if (r > arenaR) {
+          const nx = dx / r;
+          const ny = dy / r;
+          // Snap back onto the wall.
+          p.x = cx + nx * arenaR;
+          p.y = cy + ny * arenaR;
+          // Reflect velocity over the inward normal.
+          const dot = p.vx * nx + p.vy * ny;
+          p.vx = (p.vx - 2 * dot * nx) * 0.85;
+          p.vy = (p.vy - 2 * dot * ny) * 0.85;
+        }
+      }
+      // 'void' topology: no clamping — particles can drift off screen.
     }
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
   function render() {
-    ctx.fillStyle = 'rgba(10,10,10,0.25)';
+    // Background fade drives motion trails: lower alpha = longer trails.
+    ctx.fillStyle = 'rgba(10,10,10,' + trailFade.toFixed(3) + ')';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Arena ring visual hint.
+    if (topology === 'arena') {
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+      const r = Math.min(canvas.width, canvas.height) * 0.48;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 221, 0, 0.25)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     for (let i = 0; i < particles.length; i++) {
       const p = particles[i];
+      // Size is a soft function of mass: heavier = bigger.
+      const m = masses[p.type] || 1;
+      const radius = 2 + Math.min(2.5, (m - 1) * 1.2);
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
       ctx.fillStyle = colors[p.type] || '#ffffff';
       ctx.shadowBlur = 6;
       ctx.shadowColor = colors[p.type] || '#ffffff';
@@ -319,16 +531,6 @@
   }
 
   // ── Sound layer ─────────────────────────────────────────────────────────────
-  // Two pieces:
-  //   1. Continuous ambient pad — two oscillators whose gain and pitch are
-  //      modulated by the world's kinetic energy + density each frame.
-  //      Higher energy = louder + brighter. Calm universes are near-silent.
-  //   2. Short pings on user interactions (rule edit, AI success, respawn,
-  //      preset etc.), each a tiny oscillator envelope.
-  //
-  // All sound is opt-out: a toggle button flips `soundOn`. The AudioContext
-  // is lazily created on the first user gesture so Chrome/Safari don't
-  // block it.
   let audioCtx = null;
   let padOscA = null, padOscB = null, padGain = null, padFilter = null;
   let padPitchTarget = 140;
@@ -344,45 +546,36 @@
       padFilter.type = 'lowpass';
       padFilter.frequency.value = 900;
       padFilter.Q.value = 3;
-
       padGain = audioCtx.createGain();
       padGain.gain.value = 0;
-
       padOscA = audioCtx.createOscillator();
       padOscA.type = 'sawtooth';
       padOscA.frequency.value = 140;
-
       padOscB = audioCtx.createOscillator();
       padOscB.type = 'sine';
       padOscB.frequency.value = 140 * 1.5;
-
       const mixA = audioCtx.createGain();
       mixA.gain.value = 0.6;
       const mixB = audioCtx.createGain();
       mixB.gain.value = 0.4;
-
       padOscA.connect(mixA).connect(padFilter);
       padOscB.connect(mixB).connect(padFilter);
       padFilter.connect(padGain).connect(audioCtx.destination);
-
       padOscA.start();
       padOscB.start();
     } catch (e) { /* ignore */ }
     return audioCtx;
   }
-
   function resumeAudioIfNeeded() {
     const c = ensureAudio();
     if (c && c.state === 'suspended') c.resume().catch(() => {});
   }
 
-  // Measure kinetic energy + density and drive the pad.
   function updatePadFromWorld() {
     if (!audioCtx || !padGain || !padOscA) return;
     if (!soundOn) {
       padGainTarget = 0;
     } else {
-      // Average speed across particles (sample to keep it cheap).
       let speedSum = 0;
       const stride = Math.max(1, Math.floor(particles.length / 60));
       let samples = 0;
@@ -392,17 +585,11 @@
         samples++;
       }
       const avgSpeed = samples > 0 ? speedSum / samples : 0;
-      // Density — more particles = slightly fuller pad.
       const density = Math.min(1, particles.length / 500);
-
-      // Kinetic energy → gain (small ceiling so it never blasts).
       padGainTarget = Math.min(0.08, 0.01 + avgSpeed * 0.06 + density * 0.02);
-      // Pitch drifts with chaos, but stays in a calm bass band.
       padPitchTarget = 90 + avgSpeed * 70 + density * 30;
-      // Clamp so very chaotic universes don't scream.
       if (padPitchTarget > 260) padPitchTarget = 260;
     }
-
     try {
       const now = audioCtx.currentTime;
       padGain.gain.linearRampToValueAtTime(padGainTarget, now + 0.25);
@@ -431,36 +618,27 @@
       o.stop(t + dur + 0.02);
     } catch (e) { /* ignore */ }
   }
-
   function playRuleTap(v) {
-    // Attract = upward pitch, repel = downward, ignore = mid. Keeps the
-    // grid feeling like a tactile instrument.
     const base = 320;
     const freq = base + v * 220;
     playPing(freq, 0.09, 'triangle');
   }
-
   function playSuccess()   { playPing(520, 0.16, 'sine');     setTimeout(() => playPing(780, 0.18, 'sine'), 90); }
   function playRespawn()   { playPing(180, 0.18, 'sawtooth'); }
   function playError()     { playPing(180, 0.22, 'square');   setTimeout(() => playPing(120, 0.18, 'square'), 80); }
 
-  // ── Universe init / AI spec application ────────────────────────────────────
+  // ── Apply an AI spec (or a manual randomize) ───────────────────────────────
   function applySpec(spec, srcSeed) {
-    // Used for both AI-returned specs and manual randomize. Fills in any
-    // missing fields with defaults so we can never end up in a broken state.
     const rng = makeSeedRNG(srcSeed || seed);
 
-    // Number of colors.
     let n = Math.round(spec.numColors || spec.num_colors || 0);
     if (!n || n < MIN_COLORS) n = MIN_COLORS;
     if (n > MAX_COLORS) n = MAX_COLORS;
 
-    // Colors.
     let palette = Array.isArray(spec.colors) ? spec.colors.slice(0, n).map(clampColor) : [];
     while (palette.length < n) palette = palette.concat(generateColorPalette(rng, n - palette.length));
     palette = palette.slice(0, n);
 
-    // Force matrix.
     let matrix;
     if (Array.isArray(spec.matrix) && spec.matrix.length === n
         && spec.matrix.every(row => Array.isArray(row) && row.length === n)) {
@@ -471,43 +649,66 @@
       matrix = buildForceMatrix(rng, n);
     }
 
-    // Scalar knobs (with clamps).
+    // Per-type traits (optional). Default to 1.0 if absent.
+    let massArr;
+    if (Array.isArray(spec.masses) && spec.masses.length === n) {
+      massArr = spec.masses.map(v => clampFloat(v, 0.3, 3.0, 1));
+    } else {
+      massArr = new Array(n).fill(1);
+    }
+    let trailArr;
+    if (Array.isArray(spec.trails) && spec.trails.length === n) {
+      trailArr = spec.trails.map(v => clampFloat(v, 0, 1, 0.5));
+    } else {
+      trailArr = new Array(n).fill(0.5);
+    }
+
     const count   = clampInt(spec.particleCount  ?? spec.particle_count,  MIN_COUNT, MAX_COUNT, particleCount);
     const speed   = clampFloat(spec.speed,     0.2,  2.0, 1.0);
     const fric    = clampFloat(spec.friction,  0.8,  0.99, 0.95);
     const reach   = clampFloat(spec.maxDist ?? spec.reach, 60, 220, 120);
     const minD    = clampFloat(spec.minDist, 8, 40, DEFAULT_MIN_DIST);
+    const fs      = clampFloat(spec.fieldStrength ?? spec.field_strength, 0, 1, 0.35);
+    const mut     = clampFloat(spec.mutationRate ?? spec.mutation_rate, 0, 0.02, 0);
+    const tf      = clampFloat(spec.trailFade ?? spec.trail_fade, 0.05, 0.6, 0.25);
 
-    // Spawn shape / mouse mode / name.
-    const allowedSpawn = ['scatter', 'ball', 'ring', 'stripes'];
-    const allowedMouse = ['repel', 'attract', 'off'];
-    const shape = allowedSpawn.includes(spec.spawnShape) ? spec.spawnShape
-                : allowedSpawn.includes(spec.spawn)      ? spec.spawn
+    const shape = ALLOWED_SPAWN.includes(spec.spawnShape) ? spec.spawnShape
+                : ALLOWED_SPAWN.includes(spec.spawn)      ? spec.spawn
                 : 'scatter';
-    const mouse = allowedMouse.includes(spec.mouseMode) ? spec.mouseMode
-                : allowedMouse.includes(spec.mouse)     ? spec.mouse
+    const mouse = ALLOWED_MOUSE.includes(spec.mouseMode) ? spec.mouseMode
+                : ALLOWED_MOUSE.includes(spec.mouse)     ? spec.mouse
                 : 'repel';
+    const topo  = ALLOWED_TOPOLOGY.includes(spec.topology) ? spec.topology : 'torus';
+    const fld   = ALLOWED_FIELD.includes(spec.field) ? spec.field : 'none';
+    const tm    = ALLOWED_TIME.includes(spec.timeMode) ? spec.timeMode
+                : ALLOWED_TIME.includes(spec.time)     ? spec.time
+                : 'static';
     const name = (typeof spec.name === 'string' && spec.name.trim())
       ? spec.name.trim().slice(0, 60)
       : universeNameFromSeed(srcSeed || seed);
 
-    // Commit.
     numTypes = n;
     colors = palette;
+    masses = massArr;
+    trailTypes = trailArr;
     forceMatrix = matrix;
+    liveMatrix = cloneMatrix(matrix);
     particleCount = count;
     speedMultiplier = speed;
     friction = fric;
     maxDist = reach;
     minDist = minD;
+    fieldStrength = fs;
+    mutationRate = mut;
+    trailFade = tf;
     spawnShape = shape;
     mouseMode = mouse;
+    topology = topo;
+    field = fld;
+    timeMode = tm;
     universeName = name;
 
-    // Re-sync UI controls.
     syncControlsFromState();
-
-    // Spawn particles in the chosen shape.
     particles = spawnParticles(rng, particleCount, spawnShape);
   }
 
@@ -523,8 +724,8 @@
   }
 
   // ── Ruleset encoding (URL share) ────────────────────────────────────────────
-  // Share encoding now includes the colours and N (since they're variable).
-  // Format: r=<hex matrix>&n=<int>&c=<comma-sep hexes without #>
+  // Share encoding includes matrix + N + palette + the new world knobs so a
+  // shared link restores the full universe, not just the force matrix.
   function encodeMatrix(m) {
     let out = '';
     for (let r = 0; r < m.length; r++) {
@@ -536,7 +737,6 @@
     }
     return out;
   }
-
   function decodeMatrix(str, n) {
     if (!str || str.length !== n * n) return null;
     const m = [];
@@ -568,7 +768,15 @@
       const parts = cRaw.split(',').map(p => clampColor('#' + p.replace(/^#/, '')));
       if (parts.length === n) palette = parts;
     }
-    return { matrix: matrix, numColors: n, colors: palette };
+    return {
+      matrix: matrix,
+      numColors: n,
+      colors: palette,
+      topology:  ALLOWED_TOPOLOGY.includes(params.get('t')) ? params.get('t') : null,
+      field:     ALLOWED_FIELD.includes(params.get('f'))    ? params.get('f') : null,
+      timeMode:  ALLOWED_TIME.includes(params.get('tm'))    ? params.get('tm') : null,
+      spawnShape: ALLOWED_SPAWN.includes(params.get('s'))   ? params.get('s') : null,
+    };
   }
 
   function writeRulesetToHash() {
@@ -578,6 +786,10 @@
     params.set('r', enc);
     params.set('n', String(numTypes));
     params.set('c', cEnc);
+    params.set('t', topology);
+    params.set('f', field);
+    params.set('tm', timeMode);
+    params.set('s', spawnShape);
     const url = location.pathname + location.search + '#' + params.toString();
     try { history.replaceState(null, '', url); } catch (e) { location.hash = params.toString(); }
   }
@@ -585,50 +797,79 @@
   // ── AI call ────────────────────────────────────────────────────────────────
   async function generateUniverse(prompt) {
     const SYSTEM_PROMPT = [
-      'You design universes for a "Particle Life" simulation. The user describes a universe in plain English; you return a strict JSON object describing its full physics.',
+      'You design universes for a "Particle Life" simulation. The user describes one in plain English; you return a strict JSON object describing the full world.',
       '',
-      'Particle Life works like this: there are N types of coloured particles (N = 3..7). Each type exerts a force on every other type given by an NxN matrix of numbers from -1..+1. Positive = that colour is ATTRACTED to the other colour; negative = repelled; near 0 = ignores. The matrix is NOT symmetric — "red attracts blue" is independent from "blue attracts red". Asymmetry is where chase-behaviour and emergent spirals come from.',
+      'A universe has N types of coloured particles (N = 3..7). Each type exerts a force on every other type given by an NxN matrix of numbers from -1..+1. Positive = attracted, negative = repelled, near 0 = ignores. The matrix is NOT symmetric — asymmetry is where chase behaviour and spirals come from.',
+      '',
+      'But a universe is MORE than a force matrix. You also design:',
+      '- its spatial TOPOLOGY (how space wraps/bounds),',
+      '- an ambient environmental FIELD (e.g. gravity, vortex, waves),',
+      '- a TIME mode (is the matrix static, breathing, drifting, or cycling?),',
+      '- per-type MASSES and TRAILS (some species are heavier/lighter, some leave long trails),',
+      '- a MUTATION rate (on close contact, one particle may convert to the other\'s type — lets species spread).',
       '',
       'Output ONE strict JSON object. No prose, no code fence, no explanation.',
       '',
-      'Schema (all fields required):',
+      'Schema (all fields required unless marked optional):',
       '{',
       '  "name": "short evocative name, 2-5 words, no quotes",',
       '  "numColors": integer 3-7,',
-      '  "colors": array of `numColors` hex strings like "#aabbcc" — VIVID, readable on near-black (#0a0a0a), distinct from each other. NEVER pure #000000 or very dark. Avoid low-contrast pastels unless the user explicitly asks for muted.',
-      '  "matrix": `numColors` x `numColors` array of numbers in -1..+1. Row acts on column. Asymmetric is good.',
-      '  "particleCount": integer 50-800. Default 300. Calm/sparse universes: 150-250. Dense/chaotic: 400-600.',
-      '  "speed": number 0.2-2. Default 1. Slow/gentle: 0.4-0.7. Fast/frantic: 1.3-1.8.',
-      '  "friction": number 0.8-0.99. Default 0.95. Viscous/calm: 0.90-0.94. Frictionless/energetic: 0.96-0.99.',
-      '  "maxDist": number 60-220. Default 120. Interaction reach. Short-range tight clusters: 60-90. Long-range swarms: 160-220.',
-      '  "minDist": number 8-40. Default 20. Close-range repulsion floor. Rarely needs to change.',
-      '  "spawnShape": "scatter" | "ball" | "ring" | "stripes". Scatter = uniform. Ball = tight cluster. Ring = hollow circle. Stripes = vertical colour bands. Pick whichever shows off this universe at t=0.',
-      '  "mouseMode": "repel" | "attract" | "off". Default "repel".',
+      '  "colors": array of `numColors` hex strings like "#aabbcc" — VIVID, readable on near-black (#0a0a0a). Avoid #000 or very dark. Avoid low-contrast pastels unless asked.',
+      '  "matrix": `numColors` x `numColors` numbers in -1..+1. Row acts on column. Asymmetric is good.',
+      '  "masses": array of `numColors` numbers in 0.3..3.0. Default 1 for each. Heavier = slower, looks bigger. Use varied masses for predator/prey, planets/moons, heavy cores, etc.',
+      '  "trails": array of `numColors` numbers in 0..1. Advisory — the renderer uses trailFade globally.',
+      '  "particleCount": integer 50-800. Default 300. Calm: 150-250. Dense/chaotic: 400-600.',
+      '  "speed": number 0.2-2. Default 1.',
+      '  "friction": number 0.8-0.99. Default 0.95. Calm/viscous: 0.90-0.94. Frictionless/energetic: 0.96-0.99.',
+      '  "maxDist": number 60-220. Default 120. Interaction reach.',
+      '  "minDist": number 8-40. Default 20. Close-range repulsion floor.',
+      '  "spawnShape": one of "scatter" | "ball" | "ring" | "stripes" | "sectors" | "clusters". Pick whichever frames this universe best at t=0.',
+      '  "mouseMode": one of "repel" | "attract" | "spawn" | "infect" | "off". Default "repel".',
+      '  "topology": one of "torus" | "walls" | "void" | "arena".',
+      '     - torus: edges wrap (classic).',
+      '     - walls: hard rectangular walls, particles bounce.',
+      '     - void: no walls, no wrap — particles drift off forever (use for isolated blooms, breathing cells).',
+      '     - arena: circular hard wall centered on screen, particles bounce off.',
+      '  "field": one of "none" | "gravity" | "antigravity" | "vortex" | "waves" | "pole".',
+      '     - none: pure particle rules.',
+      '     - gravity: centre pulls — good for planets, solar systems, tight swirls.',
+      '     - antigravity: centre pushes — good for explosions, fireworks, blooms.',
+      '     - vortex: tangential swirl — good for spirals, whirlpools, galaxies.',
+      '     - waves: gentle standing ripples — good for tidepools, oceans, breathing dust.',
+      '     - pole: dipole: top drifts down, bottom drifts up (or vice versa) — good for layered tides.',
+      '  "fieldStrength": number 0..1 — how strongly the field affects particles. Default 0.35.',
+      '  "timeMode": one of "static" | "pulse" | "drift" | "daynight".',
+      '     - static: rules don\'t change.',
+      '     - pulse: the whole matrix amplitude breathes (stronger, weaker, stronger...) on ~6s period. Good for organisms that feel alive, heartbeats.',
+      '     - drift: each cell slowly morphs on its own phase — behaviour keeps evolving. Good for "universe that never settles".',
+      '     - daynight: the whole matrix slowly inverts sign across ~30s — attractions become repulsions and back. Good for ecosystems with day/night rhythms.',
+      '  "mutationRate": number 0..0.02. 0 = no mutation (stable species). Higher = species can convert on contact, so populations spread like infections. Use 0.003-0.008 for "viral" feels, 0.01-0.02 for rapid takeover.',
+      '  "trailFade": number 0.05..0.6. Lower = longer visible motion trails. 0.1 = streaky comet trails; 0.25 = balanced; 0.5 = clean dots.',
       '}',
       '',
       'DESIGN GUIDANCE:',
-      '- If the user mentions "chase", "predator/prey", "rock-paper-scissors", make a CYCLIC matrix: type i strongly attracts type i+1, type i+1 repels type i. The diagonal should be mildly positive (self-cohesion) or mildly negative.',
-      '- If the user mentions "cells", "membrane", "orbs", "blobs": strong self-attract on the diagonal, moderate repulsion to all other types — produces round self-contained clusters.',
-      '- If the user mentions "crystal", "lattice", "rigid", "snap": strong self-attract with strong mutual repulsion between different types — particles lock into geometric patterns. Use high friction (0.96+) and slower speed.',
-      '- If the user mentions "orbit", "binary", "dance", "galaxy": a few asymmetric pairs (a→b +0.7, b→a -0.7) produces orbital dynamics. Fewer colours (3-4) makes this cleaner.',
-      '- If the user mentions "explosion", "fireworks", "chaos": strong negative diagonal (self-repel) + mixed off-diagonal values. Low friction (0.97-0.99), high speed.',
-      '- If the user mentions "drift", "dust", "gentle", "calm": all values near 0, slight positive-leaning. Low particle count. High friction.',
-      '- If the user mentions "flocking", "schooling", "birds": moderate self-attract, mild attract to other types. Medium speed, medium friction.',
-      '- If the user mentions a colour scheme (neon, pastel, fire, ocean, forest): pick colours that match. Otherwise use vivid neon on near-black.',
-      '- Always pick a spawnShape that makes the t=0 moment LEGIBLE for this universe: crystal → ball, orbiters → ring, chase loop → stripes, drift → scatter.',
+      '- Think about what KIND of world the user is asking for, then pick topology/field/timeMode that frames it.',
+      '  - "galaxy/solar system/orbits" → topology arena or torus; field vortex or gravity; trailFade low (0.10-0.15); heavy central-species mass.',
+      '  - "crystal/lattice" → topology walls; field none; timeMode static; friction 0.96+; spawnShape ball.',
+      '  - "cells/membranes/blobs" → strong diagonal self-attract; maybe mutationRate 0 to keep species stable.',
+      '  - "predator/prey/chase" → cyclic matrix (i attracts i+1, i+1 repels i); often mutationRate 0.005-0.01 so populations shift.',
+      '  - "viral/outbreak/infection" → high mutationRate (0.01+), cyclic matrix, fast speed.',
+      '  - "tidepool/ocean/calm" → field waves; low speed; high friction; scatter spawn; pulse or drift timeMode.',
+      '  - "fireworks/explosion" → field antigravity; low friction; spawnShape ball; trailFade 0.10.',
+      '  - "dust/drift/gentle" → field none or waves low strength; high friction; low particle count; scatter.',
+      '  - "flocks/swarms/schools" → moderate positive diagonal + mild positive off-diag; drift timeMode keeps them flowing.',
+      '  - "evolving/alive/changing" → timeMode drift or daynight + low mutationRate; keeps the eye returning.',
+      '- If the user mentions a colour scheme, use it; otherwise vivid neon on near-black.',
+      '- ASYMMETRY TIP: symmetric matrices settle to boring equilibria. Always include at least one asymmetric pair.',
       '',
-      'ASYMMETRY TIP: a totally symmetric matrix (m[a][b] == m[b][a]) produces boring equilibria. At minimum, include ONE asymmetric pair so there\'s motion.',
-      '',
-      'CLAMP VALUES to the ranges above. Do not return values outside them.',
-      '',
-      'Respond with ONLY the JSON object.',
+      'CLAMP all values to the ranges above. Respond with ONLY the JSON object.',
     ].join('\n');
 
     const body = {
       slug: SLUG,
       model: AI_MODEL,
-      temperature: 0.8,
-      max_tokens: 800,
+      temperature: 0.85,
+      max_tokens: 1200,
       response_format: 'json_object',
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
@@ -660,19 +901,16 @@
     lastTime = ts;
     step(dt);
     render();
-    // Update the ambient pad a few times per second — don't do it every frame.
     soundFrameCounter++;
     if (soundFrameCounter % 10 === 0) updatePadFromWorld();
     animId = requestAnimationFrame(loop);
   }
-
   function startLoop() {
     if (animId) cancelAnimationFrame(animId);
     lastTime = null;
     running = true;
     animId = requestAnimationFrame(loop);
   }
-
   function stopLoop() {
     running = false;
     if (animId) { cancelAnimationFrame(animId); animId = null; }
@@ -681,6 +919,7 @@
   // ── UI handles ───────────────────────────────────────────────────────────────
   const loadingScreen = document.getElementById('loading-screen');
   const universeNameEl = document.getElementById('universe-name');
+  const universeTagsEl = document.getElementById('universe-tags');
   const btnReset = document.getElementById('btn-reset');
   const btnScreenshot = document.getElementById('btn-screenshot');
   const btnSoundToggle = document.getElementById('btn-sound-toggle');
@@ -688,8 +927,14 @@
   const sliderFriction = document.getElementById('slider-friction');
   const sliderCount = document.getElementById('slider-count');
   const sliderRadius = document.getElementById('slider-radius');
+  const sliderField = document.getElementById('slider-field');
+  const sliderMutation = document.getElementById('slider-mutation');
+  const sliderTrail = document.getElementById('slider-trail');
   const selectSpawn = document.getElementById('select-spawn');
   const selectMouse = document.getElementById('select-mouse');
+  const selectTopology = document.getElementById('select-topology');
+  const selectField = document.getElementById('select-field');
+  const selectTime = document.getElementById('select-time');
   const rulesGrid = document.getElementById('rules-grid');
   const panelToggle = document.getElementById('panel-toggle');
   const panelBody = document.getElementById('panel-body');
@@ -707,8 +952,14 @@
     if (sliderFriction) sliderFriction.value = friction;
     if (sliderCount)    sliderCount.value = particleCount;
     if (sliderRadius)   sliderRadius.value = maxDist;
+    if (sliderField)    sliderField.value = fieldStrength;
+    if (sliderMutation) sliderMutation.value = mutationRate;
+    if (sliderTrail)    sliderTrail.value = trailFade;
     if (selectSpawn)    selectSpawn.value = spawnShape;
     if (selectMouse)    selectMouse.value = mouseMode;
+    if (selectTopology) selectTopology.value = topology;
+    if (selectField)    selectField.value = field;
+    if (selectTime)     selectTime.value = timeMode;
   }
 
   function setParticleCountDefault() {
@@ -718,6 +969,15 @@
 
   function updateNameDisplay() {
     if (universeNameEl) universeNameEl.textContent = universeName;
+    if (universeTagsEl) {
+      // Build a short tag line describing the non-default world settings.
+      const tags = [];
+      if (topology !== 'torus') tags.push(topology);
+      if (field !== 'none')     tags.push(field);
+      if (timeMode !== 'static') tags.push(timeMode);
+      if (mutationRate > 0)     tags.push('mutating');
+      universeTagsEl.textContent = tags.length ? ' · ' + tags.join(' · ') : '';
+    }
   }
 
   // ── Rules grid ───────────────────────────────────────────────────────────────
@@ -727,14 +987,12 @@
     if (v >= 0) return 'rgba(57, 255, 20, ' + alpha.toFixed(3) + ')';
     return 'rgba(255, 34, 68, ' + alpha.toFixed(3) + ')';
   }
-
   function cellSymbol(v) {
     const mag = Math.abs(v);
     if (mag < 0.08) return '·';
     if (v > 0) return '+';
     return '−';
   }
-
   function describeForce(v, fromHex, toHex) {
     const mag = Math.abs(v);
     if (mag < 0.08) return fromHex + ' ignores ' + toHex;
@@ -744,17 +1002,16 @@
     else strength = (v >= 0) ? 'strongly attracts' : 'strongly repels';
     return fromHex + ' ' + strength + ' ' + toHex;
   }
-
   function markRulesCustom() {
-    // User edits = custom ruleset. Re-sync URL so the share link reflects edits.
+    // When the user tweaks a rule, also propagate into liveMatrix so the
+    // change is immediately felt even in time-varying modes.
+    liveMatrix = cloneMatrix(forceMatrix);
     writeRulesetToHash();
   }
 
   function renderRulesGrid() {
     if (!rulesGrid) return;
     rulesGrid.innerHTML = '';
-
-    // Dynamic grid template: one 20px header track + N equal-fraction tracks.
     const tmpl = '20px repeat(' + numTypes + ', 1fr)';
     rulesGrid.style.gridTemplateColumns = tmpl;
     rulesGrid.style.gridTemplateRows = tmpl;
@@ -878,6 +1135,7 @@
       particles = spawnParticles(rng, particleCount, spawnShape);
       ctx.fillStyle = '#0a0a0a';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
+      writeRulesetToHash();
       playPing(260, 0.1, 'triangle');
     });
   }
@@ -889,14 +1147,41 @@
     });
   }
 
+  if (selectTopology) {
+    selectTopology.addEventListener('change', function () {
+      topology = this.value;
+      updateNameDisplay();
+      writeRulesetToHash();
+      playPing(420, 0.1, 'triangle');
+    });
+  }
+
+  if (selectField) {
+    selectField.addEventListener('change', function () {
+      field = this.value;
+      updateNameDisplay();
+      writeRulesetToHash();
+      playPing(300, 0.1, 'triangle');
+    });
+  }
+
+  if (selectTime) {
+    selectTime.addEventListener('change', function () {
+      timeMode = this.value;
+      worldClock = 0;
+      updateLiveMatrix();
+      updateNameDisplay();
+      writeRulesetToHash();
+      playPing(480, 0.1, 'triangle');
+    });
+  }
+
   sliderSpeed.addEventListener('input', function () {
     speedMultiplier = parseFloat(this.value);
   });
-
   sliderFriction.addEventListener('input', function () {
     friction = parseFloat(this.value);
   });
-
   sliderCount.addEventListener('change', function () {
     particleCount = parseInt(this.value, 10);
     const rng = makeSeedRNG(seed);
@@ -904,10 +1189,25 @@
     ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   });
-
   if (sliderRadius) {
     sliderRadius.addEventListener('input', function () {
       maxDist = parseFloat(this.value);
+    });
+  }
+  if (sliderField) {
+    sliderField.addEventListener('input', function () {
+      fieldStrength = parseFloat(this.value);
+    });
+  }
+  if (sliderMutation) {
+    sliderMutation.addEventListener('input', function () {
+      mutationRate = parseFloat(this.value);
+      updateNameDisplay();
+    });
+  }
+  if (sliderTrail) {
+    sliderTrail.addEventListener('input', function () {
+      trailFade = parseFloat(this.value);
     });
   }
 
@@ -915,6 +1215,7 @@
     btnRandomRules.addEventListener('click', function () {
       const rng = makeSeedRNG(hash('' + Date.now() + Math.random()));
       forceMatrix = buildForceMatrix(rng, numTypes);
+      liveMatrix = cloneMatrix(forceMatrix);
       renderRulesGrid();
       markRulesCustom();
       updateNameDisplay();
@@ -953,7 +1254,6 @@
     });
   }
 
-  // ── Sound toggle ────────────────────────────────────────────────────────────
   if (btnSoundToggle) {
     btnSoundToggle.addEventListener('click', function () {
       soundOn = !soundOn;
@@ -963,7 +1263,6 @@
         resumeAudioIfNeeded();
         playPing(520, 0.12, 'sine');
       } else {
-        // Silence the pad immediately.
         if (audioCtx && padGain) {
           try { padGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1); } catch (e) {}
         }
@@ -973,23 +1272,24 @@
 
   // ── AI prompt wiring ────────────────────────────────────────────────────────
   const SURPRISE_PROMPTS = [
-    'four colours in a rock-paper-scissors chase, each hunting the next',
-    'crystalline lattice that snaps into geometric patterns',
-    'gentle dust motes drifting in warm golden sunlight',
-    'chaotic fireworks exploding from the centre',
-    'binary-star orbits, two colours locked in a gravitational dance',
-    'predator-prey ecosystem, fast, asymmetric, feels alive',
-    'slime membranes — self-contained orbs that ignore each other',
-    'a cold still ocean with faint tidal movements',
-    'psychedelic neon swarm, dense, fast, low friction',
-    'ant trails — long thin moving chains of colour',
+    'four colours in a rock-paper-scissors chase, each hunting the next, with mutation on contact so species slowly take each other over',
+    'crystalline lattice trapped inside hard walls — snaps into geometric patterns',
+    'gentle dust motes drifting in warm golden sunlight over a standing wave field',
+    'chaotic fireworks exploding from an anti-gravity centre',
+    'binary-star orbits inside a circular arena, two heavy colours locked in a gravitational dance with long comet trails',
+    'predator-prey ecosystem with a day/night cycle, rules slowly flip and species stalk through the dark',
+    'slime membranes drifting in the void — self-contained orbs that ignore each other',
+    'a cold still ocean with faint tidal movements, drifting rules, mostly empty space',
+    'psychedelic neon swarm in a vortex, dense, fast, breathing between attraction and repulsion',
+    'ant trails — long thin moving chains of colour migrating across a toroidal plane',
+    'galactic swirl: three pastel colours orbiting a central gravity well, slow, graceful, heavy cores with long trails',
+    'viral outbreak where one colour slowly converts all others through contact',
   ];
 
   function setAiStatus(msg, isErr) {
     aiStatus.textContent = msg || '';
     aiStatus.classList.toggle('err', !!isErr);
   }
-
   function setAiBusy(busy) {
     btnAiRun.disabled = busy;
     btnAiSurprise.disabled = busy;
@@ -1006,6 +1306,7 @@
     setAiStatus('asking the AI for physics…', false);
     try {
       stopLoop();
+      worldClock = 0;
       const newSeed = hash('' + Date.now() + promptText);
       seed = newSeed;
       const spec = await generateUniverse(promptText.trim());
@@ -1021,13 +1322,17 @@
     } catch (e) {
       console.log('ai_err', e.message);
       setAiStatus('AI failed — randomised for you instead.', true);
-      // Graceful fallback: random matrix with a generated palette.
+      // Graceful fallback: random matrix, palette, leave world knobs alone
+      // so the user's current setup stays.
       const newSeed = hash('' + Date.now() + Math.random());
       seed = newSeed;
       const rng = makeSeedRNG(newSeed);
       numTypes = 3 + Math.floor(rng() * 4);
       colors = generateColorPalette(rng, numTypes);
+      masses = new Array(numTypes).fill(1);
+      trailTypes = new Array(numTypes).fill(0.5);
       forceMatrix = buildForceMatrix(rng, numTypes);
+      liveMatrix = cloneMatrix(forceMatrix);
       universeName = universeNameFromSeed(newSeed);
       particles = spawnParticles(rng, particleCount, spawnShape);
       renderRulesGrid();
@@ -1057,7 +1362,6 @@
     });
   }
   if (aiPrompt) {
-    // Cmd/Ctrl+Enter submits from the textarea.
     aiPrompt.addEventListener('keydown', function (e) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
@@ -1066,7 +1370,6 @@
       }
     });
   }
-  // Example chips fill the prompt AND fire the request (one-click vibe).
   document.querySelectorAll('.ai-example').forEach(btn => {
     btn.addEventListener('click', function () {
       const prompt = this.getAttribute('data-prompt') || this.textContent || '';
@@ -1080,7 +1383,6 @@
   function share() {
     const dataURL = canvas.toDataURL('image/png');
     const filename = universeName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-]/g, '') + '.png';
-
     if (navigator.share && navigator.canShare) {
       fetch(dataURL)
         .then(r => r.blob())
@@ -1104,7 +1406,6 @@
     } else {
       downloadFallback();
     }
-
     function downloadFallback() {
       const a = document.createElement('a');
       a.href = dataURL;
@@ -1112,7 +1413,6 @@
       a.click();
     }
   }
-
   btnScreenshot.addEventListener('click', share);
   window.share = share;
 
@@ -1122,34 +1422,64 @@
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
+  function spawnAt(x, y) {
+    // Drop a small burst of random-type particles at (x,y), respecting
+    // the current particle cap.
+    const burst = 18;
+    for (let i = 0; i < burst; i++) {
+      if (particles.length >= MAX_COUNT) break;
+      const t = Math.floor(Math.random() * numTypes);
+      particles.push({
+        x: x + (Math.random() - 0.5) * 30,
+        y: y + (Math.random() - 0.5) * 30,
+        vx: (Math.random() - 0.5) * 2,
+        vy: (Math.random() - 0.5) * 2,
+        type: t,
+      });
+    }
+    playPing(600, 0.08, 'triangle');
+  }
+
   canvas.addEventListener('mousemove', function (e) {
     if (!running) return;
     const p = getCanvasPos(e);
-    touchX = p.x; touchY = p.y;
+    mouseX = p.x; mouseY = p.y;
+    // Continuous spawn while holding.
+    if (mouseMode === 'spawn' && mouseDown) {
+      if (Math.random() < 0.3) spawnAt(p.x, p.y);
+    }
   });
-  canvas.addEventListener('mouseleave', function () { touchX = null; touchY = null; });
-
-  // Canvas clicks can "kick" audio to life for users who haven't hit a button.
+  canvas.addEventListener('mouseleave', function () { mouseX = null; mouseY = null; mouseDown = false; });
+  canvas.addEventListener('mousedown', function (e) {
+    mouseDown = true;
+    resumeAudioIfNeeded();
+    const p = getCanvasPos(e);
+    if (mouseMode === 'spawn') spawnAt(p.x, p.y);
+  });
+  canvas.addEventListener('mouseup', function () { mouseDown = false; });
   canvas.addEventListener('click', resumeAudioIfNeeded);
 
   canvas.addEventListener('touchstart', function (e) {
     if (!running) return;
     e.preventDefault();
     resumeAudioIfNeeded();
+    mouseDown = true;
     const t = e.touches[0];
     const p = getCanvasPos(t);
-    touchX = p.x; touchY = p.y;
+    mouseX = p.x; mouseY = p.y;
+    if (mouseMode === 'spawn') spawnAt(p.x, p.y);
   }, { passive: false });
-
   canvas.addEventListener('touchmove', function (e) {
     if (!running) return;
     e.preventDefault();
     const t = e.touches[0];
     const p = getCanvasPos(t);
-    touchX = p.x; touchY = p.y;
+    mouseX = p.x; mouseY = p.y;
+    if (mouseMode === 'spawn' && mouseDown) {
+      if (Math.random() < 0.25) spawnAt(p.x, p.y);
+    }
   }, { passive: false });
-
-  canvas.addEventListener('touchend', function () { touchX = null; touchY = null; });
+  canvas.addEventListener('touchend', function () { mouseX = null; mouseY = null; mouseDown = false; });
 
   // ── Boot ────────────────────────────────────────────────────────────────────
   setParticleCountDefault();
@@ -1157,25 +1487,33 @@
   setTimeout(function () {
     const shared = readSharedUniverse();
     if (shared) {
-      // Rebuild from shared state — matrix, N, and palette (if provided).
       numTypes = shared.numColors;
       forceMatrix = shared.matrix;
+      liveMatrix = cloneMatrix(forceMatrix);
+      masses = new Array(numTypes).fill(1);
+      trailTypes = new Array(numTypes).fill(0.5);
       if (shared.colors) colors = shared.colors;
       else {
         const rng = makeSeedRNG(seed);
         colors = generateColorPalette(rng, numTypes);
       }
+      if (shared.topology)   topology = shared.topology;
+      if (shared.field)      field = shared.field;
+      if (shared.timeMode)   timeMode = shared.timeMode;
+      if (shared.spawnShape) spawnShape = shared.spawnShape;
       universeName = 'Shared Universe';
       const rng = makeSeedRNG(seed);
       particles = spawnParticles(rng, particleCount, spawnShape);
     } else {
-      // First boot — build an initial random universe so the screen has
-      // motion before the user types anything. Three colours, scatter
-      // spawn, mild-to-medium dynamics.
+      // First boot — build an initial random universe with mild default
+      // world knobs so the screen has motion before the user types anything.
       const rng = makeSeedRNG(seed);
       numTypes = 4;
       colors = generateColorPalette(rng, numTypes);
+      masses = new Array(numTypes).fill(1);
+      trailTypes = new Array(numTypes).fill(0.5);
       forceMatrix = buildForceMatrix(rng, numTypes);
+      liveMatrix = cloneMatrix(forceMatrix);
       universeName = universeNameFromSeed(seed);
       particles = spawnParticles(rng, particleCount, spawnShape);
     }

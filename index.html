@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Particle Life</title>
   <meta property="og:title" content="Particle Life">
-  <meta property="og:description" content="Describe a universe in plain words — AI builds the physics, colors, and rules. Hundreds of particles living by your laws. Sounds tuned to the chaos.">
+  <meta property="og:description" content="Describe a universe in plain words — AI builds the physics, colors, topology, and living rules. Hundreds of particles breathing by your laws.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://benlirio.com/particle-life/">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -28,6 +28,7 @@
 
   <div id="universe-banner">
     <span id="universe-name">—</span>
+    <span id="universe-tags"></span>
   </div>
 
   <div id="ui-panel">
@@ -37,18 +38,21 @@
     <div id="panel-body">
 
       <!-- AI prompt — primary way to build a universe. Plain English in,
-           full physics spec out (colors, force matrix, counts, radii, spawn). -->
+           full physics spec out (colors, force matrix, topology, fields,
+           time-variance, mutation, traits, spawn, etc.). -->
       <div id="ai-section">
         <label id="ai-label" for="ai-prompt">describe a universe</label>
         <textarea id="ai-prompt" maxlength="280" placeholder="e.g. three colours in a slow gravitational dance, mostly attracting, occasionally chasing each other into spirals"></textarea>
         <div class="ai-examples" id="ai-examples">
           <span class="ai-examples-label">try:</span>
           <button type="button" class="ai-example" data-prompt="four colours behaving like cells — each keeps a membrane around itself, rejects the others, slowly drifts">cells</button>
-          <button type="button" class="ai-example" data-prompt="predator-prey chase: five colours where each hunts the next in a rock-paper-scissors loop, fast, frictionless">chase loop</button>
-          <button type="button" class="ai-example" data-prompt="crystal lattice: six colours that snap into rigid geometric patterns, slow drift, high friction">crystal</button>
-          <button type="button" class="ai-example" data-prompt="galactic swirl: three pastel colours orbiting a common centre, slow, graceful">galaxy</button>
-          <button type="button" class="ai-example" data-prompt="chaotic fireworks: seven vivid colours that explode outward from the middle, low friction, fast speed">fireworks</button>
-          <button type="button" class="ai-example" data-prompt="gentle drifters: three muted colours that barely interact, floating like dust in sunlight">drift</button>
+          <button type="button" class="ai-example" data-prompt="predator-prey chase: five colours where each hunts the next in a rock-paper-scissors loop, fast, frictionless, with a mutation on contact so species slowly convert">chase loop</button>
+          <button type="button" class="ai-example" data-prompt="crystal lattice trapped against hard walls: six colours snapping into rigid geometric patterns, slow drift, very high friction">crystal</button>
+          <button type="button" class="ai-example" data-prompt="galactic swirl: three pastel colours orbiting a central gravity well, slow, graceful, heavy cores with long trails">galaxy</button>
+          <button type="button" class="ai-example" data-prompt="chaotic fireworks: seven vivid colours exploding outward from an anti-gravity well, low friction, fast speed, short trails">fireworks</button>
+          <button type="button" class="ai-example" data-prompt="tidepool: five muted colours drifting on waves with pulsing force strengths, each colour breathes in and out, very gentle">tidepool</button>
+          <button type="button" class="ai-example" data-prompt="viral outbreak: four colours where contact converts one into the other, on a tangential vortex field, asymmetric rules drive a slow takeover">outbreak</button>
+          <button type="button" class="ai-example" data-prompt="migrating flocks with morphing rules: three colours whose force matrix slowly drifts over time so the behaviour keeps evolving">migration</button>
         </div>
         <div class="ai-row">
           <button id="btn-ai-run" type="button" class="primary">build universe</button>
@@ -72,6 +76,40 @@
           <option value="ball">ball — tight cluster</option>
           <option value="ring">ring — hollow shell</option>
           <option value="stripes">stripes — color bands</option>
+          <option value="sectors">sectors — pie slices</option>
+          <option value="clusters">clusters — separate blobs</option>
+        </select>
+      </div>
+
+      <div class="panel-row">
+        <label class="panel-label" for="select-topology">topology</label>
+        <select id="select-topology">
+          <option value="torus">torus — wrap at edges</option>
+          <option value="walls">walls — hard reflect</option>
+          <option value="void">void — drift off forever</option>
+          <option value="arena">arena — circular bounce</option>
+        </select>
+      </div>
+
+      <div class="panel-row">
+        <label class="panel-label" for="select-field">field</label>
+        <select id="select-field">
+          <option value="none">none — pure particle rules</option>
+          <option value="gravity">gravity well — centre pulls</option>
+          <option value="antigravity">anti-gravity — centre pushes</option>
+          <option value="vortex">vortex — tangential swirl</option>
+          <option value="waves">waves — standing ripples</option>
+          <option value="pole">dipole — N attracts, S repels</option>
+        </select>
+      </div>
+
+      <div class="panel-row">
+        <label class="panel-label" for="select-time">time</label>
+        <select id="select-time">
+          <option value="static">static — fixed rules</option>
+          <option value="pulse">pulse — breathes in and out</option>
+          <option value="drift">drift — rules morph slowly</option>
+          <option value="daynight">day/night — slow cycle</option>
         </select>
       </div>
 
@@ -80,6 +118,8 @@
         <select id="select-mouse">
           <option value="repel">repel — push away</option>
           <option value="attract">attract — pull in</option>
+          <option value="spawn">spawn — drop particles</option>
+          <option value="infect">infect — convert type</option>
           <option value="off">off — no interaction</option>
         </select>
       </div>
@@ -107,6 +147,18 @@
         <div class="panel-row">
           <label class="panel-label" for="slider-radius">reach</label>
           <input id="slider-radius" type="range" min="60" max="220" step="5" value="120">
+        </div>
+        <div class="panel-row">
+          <label class="panel-label" for="slider-field">field strength</label>
+          <input id="slider-field" type="range" min="0" max="1" step="0.05" value="0.35">
+        </div>
+        <div class="panel-row">
+          <label class="panel-label" for="slider-mutation">mutation</label>
+          <input id="slider-mutation" type="range" min="0" max="0.02" step="0.0005" value="0">
+        </div>
+        <div class="panel-row">
+          <label class="panel-label" for="slider-trail">trails</label>
+          <input id="slider-trail" type="range" min="0.05" max="0.6" step="0.01" value="0.25">
         </div>
         <div class="panel-row panel-buttons">
           <button id="btn-random-rules">randomize rules</button>
