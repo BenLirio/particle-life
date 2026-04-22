@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Particle Life</title>
   <meta property="og:title" content="Particle Life">
-  <meta property="og:description" content="A living universe of coloured particles following simple attraction/repulsion rules. Tap cells to change the rules and watch the universe reshape itself.">
+  <meta property="og:description" content="Describe a universe in plain words — AI builds the physics, colors, and rules. Hundreds of particles living by your laws. Sounds tuned to the chaos.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://benlirio.com/particle-life/">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -36,28 +36,33 @@
     </div>
     <div id="panel-body">
 
+      <!-- AI prompt — primary way to build a universe. Plain English in,
+           full physics spec out (colors, force matrix, counts, radii, spawn). -->
+      <div id="ai-section">
+        <label id="ai-label" for="ai-prompt">describe a universe</label>
+        <textarea id="ai-prompt" maxlength="280" placeholder="e.g. three colours in a slow gravitational dance, mostly attracting, occasionally chasing each other into spirals"></textarea>
+        <div class="ai-examples" id="ai-examples">
+          <span class="ai-examples-label">try:</span>
+          <button type="button" class="ai-example" data-prompt="four colours behaving like cells — each keeps a membrane around itself, rejects the others, slowly drifts">cells</button>
+          <button type="button" class="ai-example" data-prompt="predator-prey chase: five colours where each hunts the next in a rock-paper-scissors loop, fast, frictionless">chase loop</button>
+          <button type="button" class="ai-example" data-prompt="crystal lattice: six colours that snap into rigid geometric patterns, slow drift, high friction">crystal</button>
+          <button type="button" class="ai-example" data-prompt="galactic swirl: three pastel colours orbiting a common centre, slow, graceful">galaxy</button>
+          <button type="button" class="ai-example" data-prompt="chaotic fireworks: seven vivid colours that explode outward from the middle, low friction, fast speed">fireworks</button>
+          <button type="button" class="ai-example" data-prompt="gentle drifters: three muted colours that barely interact, floating like dust in sunlight">drift</button>
+        </div>
+        <div class="ai-row">
+          <button id="btn-ai-run" type="button" class="primary">build universe</button>
+          <button id="btn-ai-surprise" type="button">surprise me</button>
+        </div>
+        <div id="ai-status" class="ai-status"></div>
+      </div>
+
       <div id="rules-section">
         <div id="rules-caption">
-          <span class="caption-line">tap a cell to flip: <span class="caption-attract">attract</span> / <span class="caption-ignore">ignore</span> / <span class="caption-repel">repel</span></span>
+          <span class="caption-line">or tap a cell to flip: <span class="caption-attract">attract</span> / <span class="caption-ignore">ignore</span> / <span class="caption-repel">repel</span></span>
           <span class="caption-line caption-sub">row colour acts on column colour</span>
         </div>
         <div id="rules-grid" aria-label="Force matrix: rows act on columns. Tap a cell to change."></div>
-      </div>
-
-      <div class="panel-row">
-        <label class="panel-label" for="select-preset">preset</label>
-        <select id="select-preset">
-          <option value="random">random</option>
-          <option value="drifters">Drifters — gentle wandering</option>
-          <option value="crystallizers">Crystallizers — lattice growth</option>
-          <option value="predator-prey">Predator/Prey — chase loops</option>
-          <option value="cells">Cells — membrane orbs</option>
-          <option value="snakes">Snakes — long trailing chains</option>
-          <option value="orbiters">Orbiters — color binary stars</option>
-          <option value="exploders">Exploders — bursts &amp; voids</option>
-          <option value="big-bang">Big Bang — ball that explodes</option>
-          <option value="custom">Custom — your edited rules</option>
-        </select>
       </div>
 
       <div class="panel-row">
@@ -80,7 +85,7 @@
       </div>
 
       <div class="panel-row panel-buttons">
-        <button id="btn-random-rules">randomize</button>
+        <button id="btn-sound-toggle" type="button" aria-pressed="true">sound: on</button>
         <button id="btn-reset">respawn</button>
         <button id="btn-screenshot">screenshot</button>
       </div>
@@ -97,10 +102,15 @@
         </div>
         <div class="panel-row">
           <label class="panel-label" for="slider-count">particles</label>
-          <input id="slider-count" type="range" min="50" max="500" step="10" value="200">
+          <input id="slider-count" type="range" min="50" max="800" step="10" value="300">
+        </div>
+        <div class="panel-row">
+          <label class="panel-label" for="slider-radius">reach</label>
+          <input id="slider-radius" type="range" min="60" max="220" step="5" value="120">
         </div>
         <div class="panel-row panel-buttons">
-          <button id="btn-share-rules">share ruleset link</button>
+          <button id="btn-random-rules">randomize rules</button>
+          <button id="btn-share-rules">share link</button>
         </div>
       </div>
 

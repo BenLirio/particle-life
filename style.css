@@ -165,6 +165,132 @@ body::after {
   display: none;
 }
 
+/* ── AI section ── */
+#ai-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed rgba(57, 255, 20, 0.22);
+}
+
+#ai-label {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--neon-green);
+}
+
+#ai-prompt {
+  width: 100%;
+  min-height: 64px;
+  background: #0b0b0b;
+  color: var(--fg);
+  border: 1px solid var(--neon-green);
+  padding: 8px 10px;
+  font-family: var(--font);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  resize: vertical;
+  border-radius: 0;
+  outline: none;
+}
+
+#ai-prompt:focus {
+  border-color: var(--neon-yellow);
+  box-shadow: 0 0 6px rgba(255, 221, 0, 0.35);
+}
+
+.ai-examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.ai-examples-label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin-right: 4px;
+}
+
+.ai-example {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  padding: 3px 8px;
+  font-family: var(--font);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  text-transform: lowercase;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.ai-example:hover {
+  color: var(--neon-yellow);
+  border-color: var(--neon-yellow);
+}
+
+.ai-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.ai-row button {
+  flex: 1;
+  min-height: 40px;
+  background: transparent;
+  border: 1px solid var(--neon-cyan);
+  color: var(--neon-cyan);
+  font-family: var(--font);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 0 12px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ai-row button:hover {
+  background: var(--neon-cyan);
+  color: var(--bg);
+}
+
+.ai-row button.primary {
+  border-color: var(--neon-green);
+  color: var(--neon-green);
+}
+
+.ai-row button.primary:hover {
+  background: var(--neon-green);
+  color: var(--bg);
+}
+
+.ai-row button[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-status {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--fg);
+  opacity: 0.75;
+  min-height: 1em;
+  margin-top: 4px;
+}
+
+.ai-status.err {
+  color: var(--neon-red);
+  opacity: 1;
+}
+
 /* ── Rules section (front and center) ── */
 #rules-section {
   display: flex;
@@ -196,10 +322,10 @@ body::after {
 .caption-ignore  { color: var(--fg); opacity: 0.6; }
 .caption-repel   { color: var(--neon-red); font-weight: bold; }
 
+/* Grid dimensions are set inline from JS — N is dynamic now that the AI
+   picks how many colors each universe has (3..7). We just give it a box. */
 #rules-grid {
   display: grid;
-  grid-template-columns: 20px repeat(5, 1fr);
-  grid-template-rows: 20px repeat(5, 1fr);
   gap: 3px;
   width: min(260px, 80vw);
   aspect-ratio: 1 / 1;
@@ -330,6 +456,19 @@ input[type="range"]::-moz-range-thumb {
   background: var(--neon-yellow); color: var(--bg); outline: none;
 }
 
+#btn-sound-toggle {
+  border-color: var(--neon-green);
+  color: var(--neon-green);
+}
+#btn-sound-toggle:hover, #btn-sound-toggle:focus {
+  background: var(--neon-green); color: var(--bg); outline: none;
+}
+#btn-sound-toggle[aria-pressed="false"] {
+  opacity: 0.55;
+  border-color: rgba(255,255,255,0.25);
+  color: rgba(255,255,255,0.65);
+}
+
 #btn-share-rules {
   border-color: var(--neon-cyan);
   color: var(--neon-cyan);
@@ -374,8 +513,9 @@ input[type="range"]::-moz-range-thumb {
   display: none;
 }
 
-/* ── Preset select ── */
-select#select-preset {
+/* ── Select dropdowns ── */
+select#select-spawn,
+select#select-mouse {
   flex: 1;
   background: #111;
   color: var(--neon-cyan);
@@ -389,8 +529,10 @@ select#select-preset {
   -webkit-appearance: none;
   appearance: none;
 }
-select#select-preset:focus { outline: 1px solid var(--neon-yellow); }
-select#select-preset option { background: #111; color: var(--neon-cyan); }
+select#select-spawn:focus,
+select#select-mouse:focus { outline: 1px solid var(--neon-yellow); }
+select#select-spawn option,
+select#select-mouse option { background: #111; color: var(--neon-cyan); }
 
 /* ── Desktop: side panel ── */
 @media (min-width: 640px) {
