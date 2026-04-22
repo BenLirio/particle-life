@@ -117,6 +117,27 @@
       [ 0.60,  0.60,  0.60, -0.80,  0.60],
       [ 0.60,  0.60,  0.60,  0.60, -0.80],
     ],
+    'big-bang': [
+      [-0.90,  0.40,  0.40,  0.40,  0.40],
+      [ 0.40, -0.90,  0.40,  0.40,  0.40],
+      [ 0.40,  0.40, -0.90,  0.40,  0.40],
+      [ 0.40,  0.40,  0.40, -0.90,  0.40],
+      [ 0.40,  0.40,  0.40,  0.40, -0.90],
+    ],
+  };
+
+  // Default spawn shape for each preset. Picked so the initial moment of each
+  // preset is legible — crystallizers look great from a tight ball, snakes from
+  // stripes, cells from a ring, etc.
+  const PRESET_SPAWN = {
+    'drifters':      'scatter',
+    'crystallizers': 'ball',
+    'predator-prey': 'scatter',
+    'cells':         'ring',
+    'snakes':        'stripes',
+    'orbiters':      'ring',
+    'exploders':     'ball',
+    'big-bang':      'ball',
   };
 
   let seed = hash('' + Date.now());
@@ -124,6 +145,8 @@
   let particles = [];
   let forceMatrix = [];
   let currentPreset = 'random';
+  let spawnShape = 'scatter'; // scatter | ball | ring | stripes
+  let mouseMode = 'repel';    // repel | attract | off
   let particleCount = 200;
   let speedMultiplier = 1;
   let friction = 0.95;
@@ -170,18 +193,51 @@
   }
 
   // ── Particles ───────────────────────────────────────────────────────────────
-  function spawnParticles(rng, count) {
+  // Spawn shape controls the initial position layout. Scatter = current uniform
+  // random. Ball = tight gaussian cluster at center. Ring = hollow circle.
+  // Stripes = vertical color bands so color interactions pop at t=0.
+  function spawnParticles(rng, count, shape) {
     const list = [];
+    const W = canvas.width;
+    const H = canvas.height;
+    const cx = W / 2;
+    const cy = H / 2;
+    const ballR = Math.min(W, H) * 0.08;
+    const ringR = Math.min(W, H) * 0.28;
+    const ringThick = Math.min(W, H) * 0.04;
+    const stripeW = W / NUM_TYPES;
     const perType = Math.ceil(count / NUM_TYPES);
+
+    // Gaussian-ish sample from two uniforms (Box–Muller).
+    function gauss() {
+      const u = Math.max(1e-6, rng());
+      const v = rng();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+
     for (let t = 0; t < NUM_TYPES; t++) {
       for (let i = 0; i < perType && list.length < count; i++) {
-        list.push({
-          x: rng() * canvas.width,
-          y: rng() * canvas.height,
-          vx: 0,
-          vy: 0,
-          type: t,
-        });
+        let x, y;
+        if (shape === 'ball') {
+          x = cx + gauss() * ballR;
+          y = cy + gauss() * ballR;
+        } else if (shape === 'ring') {
+          const ang = rng() * Math.PI * 2;
+          const r = ringR + (rng() - 0.5) * ringThick * 2;
+          x = cx + Math.cos(ang) * r;
+          y = cy + Math.sin(ang) * r;
+        } else if (shape === 'stripes') {
+          x = stripeW * t + rng() * stripeW;
+          y = rng() * H;
+        } else {
+          // scatter (default)
+          x = rng() * W;
+          y = rng() * H;
+        }
+        // Clamp into bounds so edge-of-screen spawns don't immediately wrap.
+        if (x < 0) x += W; else if (x >= W) x -= W;
+        if (y < 0) y += H; else if (y >= H) y -= H;
+        list.push({ x: x, y: y, vx: 0, vy: 0, type: t });
       }
     }
     return list;
@@ -230,16 +286,25 @@
         ay += (dy / dist) * strength;
       }
 
-      if (touchX !== null) {
+      if (touchX !== null && mouseMode !== 'off') {
         let dx = p.x - touchX;
         let dy = p.y - touchY;
         const distSq = dx * dx + dy * dy;
-        const repRadius = 80;
-        if (distSq < repRadius * repRadius && distSq > 0) {
+        // Attract uses a wider radius so pulling particles in feels responsive
+        // even when the cursor is far from the nearest cluster.
+        const radius = (mouseMode === 'attract') ? 180 : 80;
+        if (distSq < radius * radius && distSq > 0) {
           const dist = Math.sqrt(distSq);
-          const repForce = (repRadius - dist) / repRadius * 3;
-          ax += (dx / dist) * repForce;
-          ay += (dy / dist) * repForce;
+          const falloff = (radius - dist) / radius;
+          if (mouseMode === 'attract') {
+            const attractForce = falloff * 2.2;
+            ax -= (dx / dist) * attractForce;
+            ay -= (dy / dist) * attractForce;
+          } else {
+            const repForce = falloff * 3;
+            ax += (dx / dist) * repForce;
+            ay += (dy / dist) * repForce;
+          }
         }
       }
 
@@ -300,7 +365,10 @@
   }
 
   // ── Universe init ────────────────────────────────────────────────────────────
-  function initUniverse(newSeed, count, presetKey, explicitMatrix) {
+  // `adoptPresetSpawn` — when the user explicitly picked a preset, auto-switch
+  // the spawn shape to the one that shows off that preset best. When they just
+  // hit "respawn" on an existing preset we leave their current spawn choice alone.
+  function initUniverse(newSeed, count, presetKey, explicitMatrix, adoptPresetSpawn) {
     seed = newSeed;
     const rng = makeSeedRNG(seed);
     if (explicitMatrix) {
@@ -318,7 +386,12 @@
       forceMatrix = buildForceMatrix(rng);
       currentPreset = 'random';
     }
-    particles = spawnParticles(rng, count);
+    if (adoptPresetSpawn && PRESET_SPAWN[currentPreset]) {
+      spawnShape = PRESET_SPAWN[currentPreset];
+      const sel = document.getElementById('select-spawn');
+      if (sel) sel.value = spawnShape;
+    }
+    particles = spawnParticles(rng, count, spawnShape);
     universeName = (currentPreset === 'random')
       ? universeNameFromSeed(seed)
       : (currentPreset === 'custom')
@@ -335,6 +408,7 @@
       'snakes': 'Snakes',
       'orbiters': 'Orbiters',
       'exploders': 'Exploders',
+      'big-bang': 'Big Bang',
       'custom': 'Custom',
     };
     return map[key] || key;
@@ -395,6 +469,8 @@
   const sliderFriction = document.getElementById('slider-friction');
   const sliderCount = document.getElementById('slider-count');
   const selectPreset = document.getElementById('select-preset');
+  const selectSpawn = document.getElementById('select-spawn');
+  const selectMouse = document.getElementById('select-mouse');
   const rulesGrid = document.getElementById('rules-grid');
   const panelToggle = document.getElementById('panel-toggle');
   const panelBody = document.getElementById('panel-body');
@@ -562,7 +638,9 @@
     stopLoop();
     const newSeed = hash('' + Date.now() + Math.random());
     particleCount = parseInt(sliderCount.value, 10);
-    initUniverse(newSeed, particleCount, selectPreset.value);
+    // Respawn honours whatever spawn the user currently has selected; don't
+    // override it with the preset's default.
+    initUniverse(newSeed, particleCount, selectPreset.value, null, false);
     updateNameDisplay();
     renderRulesGrid();
     ctx.fillStyle = '#0a0a0a';
@@ -574,13 +652,32 @@
     stopLoop();
     const newSeed = hash('' + Date.now() + Math.random());
     particleCount = parseInt(sliderCount.value, 10);
-    initUniverse(newSeed, particleCount, this.value);
+    // When the user picks a new preset, adopt the preset's showcase spawn shape.
+    initUniverse(newSeed, particleCount, this.value, null, true);
     updateNameDisplay();
     renderRulesGrid();
     ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     startLoop();
   });
+
+  if (selectSpawn) {
+    selectSpawn.addEventListener('change', function () {
+      spawnShape = this.value;
+      // Spawn-shape change = user wants to see the new arrangement now, so
+      // respawn particles in place (keep forces, seed and preset choice).
+      const rng = makeSeedRNG(hash('' + Date.now() + Math.random()));
+      particles = spawnParticles(rng, particleCount, spawnShape);
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    });
+  }
+
+  if (selectMouse) {
+    selectMouse.addEventListener('change', function () {
+      mouseMode = this.value;
+    });
+  }
 
   sliderSpeed.addEventListener('input', function () {
     speedMultiplier = parseFloat(this.value);
@@ -597,7 +694,7 @@
       forceMatrix = buildForceMatrix(rng);
       renderRulesGrid();
     }
-    particles = spawnParticles(rng, particleCount);
+    particles = spawnParticles(rng, particleCount, spawnShape);
     ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   });
@@ -720,9 +817,11 @@
     const shared = readRulesetFromHash();
     if (shared) {
       selectPreset.value = 'custom';
-      initUniverse(seed, particleCount, 'custom', shared);
+      initUniverse(seed, particleCount, 'custom', shared, false);
     } else {
-      initUniverse(seed, particleCount, selectPreset.value);
+      // On first boot, adopt the default preset's showcase spawn shape so
+      // the opening visual is striking (e.g. crystallizers start as a ball).
+      initUniverse(seed, particleCount, selectPreset.value, null, true);
     }
     updateNameDisplay();
     renderRulesGrid();
